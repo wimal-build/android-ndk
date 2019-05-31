@@ -25,6 +25,10 @@
 
 namespace spvtools {
 
+namespace opt {
+class Pass;
+}
+
 // C++ interface for SPIR-V optimization functionalities. It wraps the context
 // (including target environment and the corresponding SPIR-V grammar) and
 // provides methods for registering optimization passes and optimizing.
@@ -40,6 +44,12 @@ class Optimizer {
     struct Impl;  // Opaque struct for holding inernal data.
 
     PassToken(std::unique_ptr<Impl>);
+
+    // Tokens for built-in passes should be created using Create*Pass functions
+    // below; for out-of-tree passes, use this constructor instead.
+    // Note that this API isn't guaranteed to be stable and may change without
+    // preserving source or binary compatibility in the future.
+    PassToken(std::unique_ptr<opt::Pass>&& pass);
 
     // Tokens can only be moved. Copying is disabled.
     PassToken(const PassToken&) = delete;
@@ -483,6 +493,17 @@ Optimizer::PassToken CreateLocalRedundancyEliminationPass();
 // the loops preheader.
 Optimizer::PassToken CreateLoopInvariantCodeMotionPass();
 
+// Creates a loop fission pass.
+// This pass will split all top level loops whose register pressure exceedes the
+// given |threshold|.
+Optimizer::PassToken CreateLoopFissionPass(size_t threshold);
+
+// Creates a loop fusion pass.
+// This pass will look for adjacent loops that are compatible and legal to be
+// fused. The fuse all such loops as long as the register usage for the fused
+// loop stays under the threshold defined by |max_registers_per_loop|.
+Optimizer::PassToken CreateLoopFusionPass(size_t max_registers_per_loop);
+
 // Creates a loop peeling pass.
 // This pass will look for conditions inside a loop that are true or false only
 // for the N first or last iteration. For loop with such condition, those N
@@ -504,8 +525,10 @@ Optimizer::PassToken CreateRedundancyEliminationPass();
 
 // Create scalar replacement pass.
 // This pass replaces composite function scope variables with variables for each
-// element if those elements are accessed individually.
-Optimizer::PassToken CreateScalarReplacementPass();
+// element if those elements are accessed individually.  The parameter is a
+// limit on the number of members in the composite variable that the pass will
+// consider replacing.
+Optimizer::PassToken CreateScalarReplacementPass(uint32_t size_limit = 100);
 
 // Create a private to local pass.
 // This pass looks for variables delcared in the private storage class that are
@@ -560,6 +583,19 @@ Optimizer::PassToken CreateSSARewritePass();
 // This pass looks to copy propagate memory references for arrays.  It looks
 // for specific code patterns to recognize array copies.
 Optimizer::PassToken CreateCopyPropagateArraysPass();
+
+// Create a vector dce pass.
+// This pass looks for components of vectors that are unused, and removes them
+// from the vector.  Note this would still leave around lots of dead code that
+// a pass of ADCE will be able to remove.
+Optimizer::PassToken CreateVectorDCEPass();
+
+// Create a pass to reduce the size of loads.
+// This pass looks for loads of structures where only a few of its members are
+// used.  It replaces the loads feeding an OpExtract with an OpAccessChain and
+// a load of the specific elements.
+Optimizer::PassToken CreateReduceLoadSizePass();
+
 }  // namespace spvtools
 
 #endif  // SPIRV_TOOLS_OPTIMIZER_HPP_

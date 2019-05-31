@@ -152,7 +152,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := c++_static
 LOCAL_SRC_FILES := $(libcxx_sources)
 LOCAL_C_INCLUDES := $(libcxx_includes)
-LOCAL_CPPFLAGS := $(libcxx_cxxflags)
+LOCAL_CPPFLAGS := $(libcxx_cxxflags) -ffunction-sections -fdata-sections
 LOCAL_CPP_FEATURES := rtti exceptions
 LOCAL_EXPORT_C_INCLUDES := $(libcxx_export_includes)
 LOCAL_EXPORT_CPPFLAGS := $(libcxx_export_cxxflags)
@@ -173,7 +173,12 @@ include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := c++_shared
-LOCAL_WHOLE_STATIC_LIBRARIES := c++_static libc++abi
+LOCAL_STRIP_MODE := none
+LOCAL_SRC_FILES := $(libcxx_sources)
+LOCAL_C_INCLUDES := $(libcxx_includes)
+LOCAL_CPPFLAGS := $(libcxx_cxxflags) -fno-function-sections -fno-data-sections
+LOCAL_CPP_FEATURES := rtti exceptions
+LOCAL_WHOLE_STATIC_LIBRARIES := libc++abi
 LOCAL_EXPORT_C_INCLUDES := $(libcxx_export_includes)
 LOCAL_EXPORT_CPPFLAGS := $(libcxx_export_cxxflags)
 LOCAL_EXPORT_LDFLAGS := $(libcxx_export_ldflags)

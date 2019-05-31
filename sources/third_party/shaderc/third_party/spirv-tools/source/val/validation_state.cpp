@@ -42,7 +42,9 @@ bool IsInstructionInLayoutSection(ModuleLayoutSection layout, SpvOp op) {
     case kLayoutExtInstImport: out = op == SpvOpExtInstImport; break;
     case kLayoutMemoryModel:   out = op == SpvOpMemoryModel;   break;
     case kLayoutEntryPoint:    out = op == SpvOpEntryPoint;    break;
-    case kLayoutExecutionMode: out = op == SpvOpExecutionMode; break;
+    case kLayoutExecutionMode:
+      out = op == SpvOpExecutionMode || op == SpvOpExecutionModeId;
+      break;
     case kLayoutDebug1:
       switch (op) {
         case SpvOpSourceContinued:
@@ -112,6 +114,7 @@ bool IsInstructionInLayoutSection(ModuleLayoutSection layout, SpvOp op) {
         case SpvOpMemoryModel:
         case SpvOpEntryPoint:
         case SpvOpExecutionMode:
+        case SpvOpExecutionModeId:
         case SpvOpSourceContinued:
         case SpvOpSource:
         case SpvOpSourceExtension:
@@ -155,8 +158,8 @@ ValidationState_t::ValidationState_t(const spv_const_context ctx,
       local_vars_(),
       struct_nesting_depth_(),
       grammar_(ctx),
-      addressing_model_(SpvAddressingModelLogical),
-      memory_model_(SpvMemoryModelSimple),
+      addressing_model_(SpvAddressingModelMax),
+      memory_model_(SpvMemoryModelMax),
       in_function_(false) {
   assert(opt && "Validator options may not be Null.");
 }

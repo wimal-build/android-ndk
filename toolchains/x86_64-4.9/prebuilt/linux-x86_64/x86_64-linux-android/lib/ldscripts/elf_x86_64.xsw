@@ -7,7 +7,7 @@ OUTPUT_FORMAT("elf64-x86-64", "elf64-x86-64",
 	      "elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
-SEARCH_DIR("=/tmp/2c83971299a753917d8db9a4f5356c5d/x86_64-linux-android/lib64"); SEARCH_DIR("=/usr/local/lib64"); SEARCH_DIR("=/lib64"); SEARCH_DIR("=/usr/lib64"); SEARCH_DIR("=/tmp/2c83971299a753917d8db9a4f5356c5d/x86_64-linux-android/lib"); SEARCH_DIR("=/usr/local/lib"); SEARCH_DIR("=/lib"); SEARCH_DIR("=/usr/lib");
+SEARCH_DIR("=/buildbot/src/android/binutils/out/binutils/linux/x86_64/install/binutils-x86_64-linux/x86_64-linux-android/lib64"); SEARCH_DIR("=/usr/local/lib64"); SEARCH_DIR("=/lib64"); SEARCH_DIR("=/usr/lib64"); SEARCH_DIR("=/buildbot/src/android/binutils/out/binutils/linux/x86_64/install/binutils-x86_64-linux/x86_64-linux-android/lib"); SEARCH_DIR("=/usr/local/lib"); SEARCH_DIR("=/lib"); SEARCH_DIR("=/usr/lib");
 SECTIONS
 {
   /* Read-only sections, merged into text segment: */

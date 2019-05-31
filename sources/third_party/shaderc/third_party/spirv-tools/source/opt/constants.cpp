@@ -44,6 +44,16 @@ double Constant::GetDouble() const {
   }
 }
 
+double Constant::GetValueAsDouble() const {
+  assert(type()->AsFloat() != nullptr);
+  if (type()->AsFloat()->width() == 32) {
+    return GetFloat();
+  } else {
+    assert(type()->AsFloat()->width() == 64);
+    return GetDouble();
+  }
+}
+
 uint32_t Constant::GetU32() const {
   assert(type()->AsInteger() != nullptr);
   assert(type()->AsInteger()->width() == 32);
@@ -304,16 +314,6 @@ const Constant* ConstantManager::GetConstant(
     const Type* type, const std::vector<uint32_t>& literal_words_or_ids) {
   auto cst = CreateConstant(type, literal_words_or_ids);
   return cst ? RegisterConstant(cst) : nullptr;
-}
-
-bool VectorConstant::IsZero() const {
-  for (const Constant* component : GetComponents()) {
-    if (!component->AsNullConstant() &&
-        !component->AsScalarConstant()->IsZero()) {
-      return false;
-    }
-  }
-  return true;
 }
 
 std::vector<const analysis::Constant*> Constant::GetVectorComponents(

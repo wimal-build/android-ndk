@@ -28,7 +28,6 @@
 #
 
 TOOLCHAIN_NAME := i686-linux-android
-BINUTILS_ROOT := $(call get-binutils-root,$(NDK_ROOT),$(TOOLCHAIN_NAME))
 TOOLCHAIN_ROOT := $(call get-toolchain-root,x86-4.9)
 TOOLCHAIN_PREFIX := $(TOOLCHAIN_ROOT)/bin/$(TOOLCHAIN_NAME)-
 
@@ -39,23 +38,11 @@ TARGET_UBSAN_BASENAME := libclang_rt.ubsan_standalone-i686-android.so
 
 TARGET_CFLAGS := \
     -gcc-toolchain $(call host-path,$(TOOLCHAIN_ROOT)) \
-    -target $(LLVM_TRIPLE) \
-    -ffunction-sections \
-    -funwind-tables \
-    -fstack-protector-strong \
     -fPIC \
-    -Wno-invalid-command-line-argument \
-    -Wno-unused-command-line-argument \
-    -no-canonical-prefixes
-
-# Always enable debug info. We strip binaries when needed.
-TARGET_CFLAGS += -g
 
 # Add and LDFLAGS for the target here
 TARGET_LDFLAGS += \
     -gcc-toolchain $(call host-path,$(TOOLCHAIN_ROOT)) \
-    -target $(LLVM_TRIPLE) \
-    -no-canonical-prefixes
 
 TARGET_x86_release_CFLAGS := \
     -O2 \

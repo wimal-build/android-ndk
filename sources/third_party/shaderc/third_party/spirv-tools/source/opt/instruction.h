@@ -24,6 +24,7 @@
 #include "operand.h"
 #include "util/ilist_node.h"
 
+#include "latest_version_glsl_std_450_header.h"
 #include "latest_version_spirv_header.h"
 #include "reflect.h"
 #include "spirv-tools/libspirv.h"
@@ -404,6 +405,13 @@ class Instruction : public utils::IntrusiveNodeBase<Instruction> {
   // |options| are the disassembly options. SPV_BINARY_TO_TEXT_OPTION_NO_HEADER
   // is always added to |options|.
   std::string PrettyPrint(uint32_t options = 0u) const;
+
+  // Returns true if the result can be a vector and the result of each component
+  // depends on the corresponding component of any vector inputs.
+  bool IsScalarizable() const;
+
+  // Return true if the only effect of this instructions is the result.
+  bool IsOpcodeSafeToDelete() const;
 
  private:
   // Returns the total count of result type id and result id.

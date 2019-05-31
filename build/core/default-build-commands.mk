@@ -78,6 +78,7 @@ $(PRIVATE_CXX) \
     -shared \
     --sysroot=$(call host-path,$(PRIVATE_SYSROOT_LINK)) \
     $(PRIVATE_LINKER_OBJECTS_AND_LIBRARIES) \
+    $(GLOBAL_LDFLAGS) \
     $(PRIVATE_LDFLAGS) \
     $(PRIVATE_LDLIBS) \
     -o $(call host-path,$(LOCAL_BUILT_MODULE))
@@ -95,6 +96,7 @@ $(PRIVATE_CXX) \
     -Wl,-rpath-link=$(call host-path,$(PRIVATE_SYSROOT_LINK)/usr/lib) \
     -Wl,-rpath-link=$(call host-path,$(TARGET_OUT)) \
     $(PRIVATE_LINKER_OBJECTS_AND_LIBRARIES) \
+    $(GLOBAL_LDFLAGS) \
     $(PRIVATE_LDFLAGS) \
     $(PRIVATE_LDLIBS) \
     -o $(call host-path,$(LOCAL_BUILT_MODULE))
@@ -104,10 +106,7 @@ define cmd-build-static-library
 $(PRIVATE_AR) $(call host-path,$(LOCAL_BUILT_MODULE)) $(PRIVATE_AR_OBJECTS)
 endef
 
-# The strip command is only used for shared libraries and executables.
-# It is thus safe to use --strip-unneeded, which is only dangerous
-# when applied to static libraries or object files.
-cmd-strip = $(PRIVATE_STRIP) --strip-unneeded $(call host-path,$1)
+cmd-strip = $(PRIVATE_STRIP) $(PRIVATE_STRIP_MODE) $(call host-path,$1)
 
 # The command objcopy --add-gnu-debuglink= will be needed for Valgrind
 cmd-add-gnu-debuglink = $(PRIVATE_OBJCOPY) --add-gnu-debuglink=$(strip $(call host-path,$2)) $(call host-path,$1)
@@ -127,24 +126,43 @@ LLVM_TOOLCHAIN_PREFIX := $(LLVM_TOOLCHAIN_PREBUILT_ROOT)/bin/
 
 ifneq ($(findstring ccc-analyzer,$(CC)),)
     TARGET_CC = $(CC)
-else ifeq ($(NDK_TOOLCHAIN_VERSION),4.9)
-    TARGET_CC = $(TOOLCHAIN_PREFIX)gcc
 else
     TARGET_CC = $(LLVM_TOOLCHAIN_PREFIX)clang$(HOST_EXEEXT)
 endif
 
-TARGET_CFLAGS   =
+CLANG_TIDY = $(LLVM_TOOLCHAIN_PREFIX)clang-tidy$(HOST_EXEEXT)
+
+GLOBAL_CFLAGS = \
+    -target $(LLVM_TRIPLE)$(TARGET_PLATFORM_LEVEL) \
+    -fdata-sections \
+    -ffunction-sections \
+    -fstack-protector-strong \
+    -funwind-tables \
+    -no-canonical-prefixes \
+
+# Always enable debug info. We strip binaries when needed.
+GLOBAL_CFLAGS += -g
+
+# TODO: Remove.
+GLOBAL_CFLAGS += \
+    -Wno-invalid-command-line-argument \
+    -Wno-unused-command-line-argument \
+
+GLOBAL_LDFLAGS = \
+    -target $(LLVM_TRIPLE)$(TARGET_PLATFORM_LEVEL) \
+    -no-canonical-prefixes \
+
+GLOBAL_CXXFLAGS = $(GLOBAL_CFLAGS) -fno-exceptions -fno-rtti
+
+TARGET_CFLAGS =
 TARGET_CONLYFLAGS =
+TARGET_CXXFLAGS = $(TARGET_CFLAGS)
 
 ifneq ($(findstring c++-analyzer,$(CXX)),)
     TARGET_CXX = $(CXX)
-else ifeq ($(NDK_TOOLCHAIN_VERSION),4.9)
-    TARGET_CXX = $(TOOLCHAIN_PREFIX)g++
 else
     TARGET_CXX = $(LLVM_TOOLCHAIN_PREFIX)clang++$(HOST_EXEEXT)
 endif
-
-TARGET_CXXFLAGS = $(TARGET_CFLAGS) -fno-exceptions -fno-rtti
 
 TARGET_RS_CC    = $(RENDERSCRIPT_TOOLCHAIN_PREFIX)llvm-rs-cc
 TARGET_RS_BCC   = $(RENDERSCRIPT_TOOLCHAIN_PREFIX)bcc_compat
@@ -161,13 +179,7 @@ TARGET_ASMFLAGS =
 TARGET_LD       = $(TOOLCHAIN_PREFIX)ld
 TARGET_LDFLAGS :=
 
-# Use *-gcc-ar instead of *-ar for better LTO support when using GCC.
-ifeq (4.9,$(NDK_TOOLCHAIN_VERSION))
-    TARGET_AR = $(TOOLCHAIN_PREFIX)gcc-ar
-else
-    TARGET_AR = $(TOOLCHAIN_PREFIX)ar
-endif
-
+TARGET_AR = $(TOOLCHAIN_PREFIX)ar
 TARGET_ARFLAGS := crsD
 
 TARGET_STRIP    = $(TOOLCHAIN_PREFIX)strip

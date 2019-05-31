@@ -25,6 +25,7 @@ SPVTOOLS_SRC_FILES := \
 		source/text.cpp \
 		source/text_handler.cpp \
 		source/util/bit_stream.cpp \
+		source/util/bit_vector.cpp \
 		source/util/parse_number.cpp \
 		source/util/string_utils.cpp \
 		source/util/timer.cpp \
@@ -92,7 +93,6 @@ SPVTOOLS_OPT_SRC_FILES := \
 		source/opt/inline_pass.cpp \
 		source/opt/inline_exhaustive_pass.cpp \
 		source/opt/inline_opaque_pass.cpp \
-		source/opt/insert_extract_elim.cpp \
 		source/opt/instruction.cpp \
 		source/opt/instruction_list.cpp \
 		source/opt/ir_context.cpp \
@@ -106,6 +106,9 @@ SPVTOOLS_OPT_SRC_FILES := \
 		source/opt/loop_dependence.cpp \
 		source/opt/loop_dependence_helpers.cpp \
 		source/opt/loop_descriptor.cpp \
+		source/opt/loop_fission.cpp \
+		source/opt/loop_fusion.cpp \
+		source/opt/loop_fusion_pass.cpp \
 		source/opt/loop_peeling.cpp \
 		source/opt/loop_unroller.cpp \
 		source/opt/loop_unswitch_pass.cpp \
@@ -118,6 +121,7 @@ SPVTOOLS_OPT_SRC_FILES := \
 		source/opt/pass_manager.cpp \
 		source/opt/private_to_local_pass.cpp \
 		source/opt/propagator.cpp \
+		source/opt/reduce_load_size.cpp \
 		source/opt/redundancy_elimination.cpp \
 		source/opt/register_pressure.cpp \
 		source/opt/remove_duplicates_pass.cpp \
@@ -135,6 +139,7 @@ SPVTOOLS_OPT_SRC_FILES := \
 		source/opt/types.cpp \
 		source/opt/unify_const_pass.cpp \
 		source/opt/value_number_table.cpp \
+		source/opt/vector_dce.cpp \
 		source/opt/workaround1209.cpp
 
 # Locations of grammar files.

@@ -34,6 +34,8 @@ const uint32_t kEntryPointFunctionIdInIdx = 1;
 const uint32_t kSelectionMergeMergeBlockIdInIdx = 0;
 const uint32_t kLoopMergeMergeBlockIdInIdx = 0;
 const uint32_t kLoopMergeContinueBlockIdInIdx = 1;
+const uint32_t kCopyMemoryTargetAddrInIdx = 0;
+const uint32_t kCopyMemorySourceAddrInIdx = 1;
 
 // Sorting functor to present annotation instructions in an easy-to-process
 // order. The functor orders by opcode first and falls back on unique id
@@ -91,12 +93,19 @@ bool AggressiveDCEPass::IsVarOfStorage(uint32_t varId, uint32_t storageClass) {
 }
 
 bool AggressiveDCEPass::IsLocalVar(uint32_t varId) {
-  return IsVarOfStorage(varId, SpvStorageClassFunction) ||
-         (IsVarOfStorage(varId, SpvStorageClassPrivate) && private_like_local_);
+  if (IsVarOfStorage(varId, SpvStorageClassFunction)) {
+    return true;
+  }
+  if (!private_like_local_) {
+    return false;
+  }
+
+  return IsVarOfStorage(varId, SpvStorageClassPrivate) ||
+         IsVarOfStorage(varId, SpvStorageClassWorkgroup);
 }
 
 void AggressiveDCEPass::AddStores(uint32_t ptrId) {
-  get_def_use_mgr()->ForEachUser(ptrId, [this](ir::Instruction* user) {
+  get_def_use_mgr()->ForEachUser(ptrId, [this, ptrId](ir::Instruction* user) {
     switch (user->opcode()) {
       case SpvOpAccessChain:
       case SpvOpInBoundsAccessChain:
@@ -104,6 +113,12 @@ void AggressiveDCEPass::AddStores(uint32_t ptrId) {
         this->AddStores(user->result_id());
         break;
       case SpvOpLoad:
+        break;
+      case SpvOpCopyMemory:
+      case SpvOpCopyMemorySized:
+        if (user->GetSingleWordInOperand(kCopyMemoryTargetAddrInIdx) == ptrId) {
+          AddToWorklist(user);
+        }
         break;
       // If default, assume it stores e.g. frexp, modf, function call
       case SpvOpStore:
@@ -326,8 +341,21 @@ bool AggressiveDCEPass::AggressiveDCE(ir::Function* func) {
           (void)GetPtr(&*ii, &varId);
           // Mark stores as live if their variable is not function scope
           // and is not private scope. Remember private stores for possible
-          // later inclusion
-          if (IsVarOfStorage(varId, SpvStorageClassPrivate))
+          // later inclusion.  We cannot call IsLocalVar at this point because
+          // private_like_local_ has not been set yet.
+          if (IsVarOfStorage(varId, SpvStorageClassPrivate) ||
+              IsVarOfStorage(varId, SpvStorageClassWorkgroup))
+            private_stores_.push_back(&*ii);
+          else if (!IsVarOfStorage(varId, SpvStorageClassFunction))
+            AddToWorklist(&*ii);
+        } break;
+        case SpvOpCopyMemory:
+        case SpvOpCopyMemorySized: {
+          uint32_t varId;
+          (void)GetPtr(ii->GetSingleWordInOperand(kCopyMemoryTargetAddrInIdx),
+                       &varId);
+          if (IsVarOfStorage(varId, SpvStorageClassPrivate) ||
+              IsVarOfStorage(varId, SpvStorageClassWorkgroup))
             private_stores_.push_back(&*ii);
           else if (!IsVarOfStorage(varId, SpvStorageClassFunction))
             AddToWorklist(&*ii);
@@ -350,7 +378,7 @@ bool AggressiveDCEPass::AggressiveDCE(ir::Function* func) {
         default: {
           // Function calls, atomics, function params, function returns, etc.
           // TODO(greg-lunarg): function calls live only if write to non-local
-          if (!context()->IsCombinatorInstruction(&*ii)) {
+          if (!ii->IsOpcodeSafeToDelete()) {
             AddToWorklist(&*ii);
           }
           // Remember function calls
@@ -406,6 +434,14 @@ bool AggressiveDCEPass::AggressiveDCE(ir::Function* func) {
     if (liveInst->opcode() == SpvOpLoad) {
       uint32_t varId;
       (void)GetPtr(liveInst, &varId);
+      if (varId != 0) {
+        ProcessLoad(varId);
+      }
+    } else if (liveInst->opcode() == SpvOpCopyMemory ||
+               liveInst->opcode() == SpvOpCopyMemorySized) {
+      uint32_t varId;
+      (void)GetPtr(liveInst->GetSingleWordInOperand(kCopyMemorySourceAddrInIdx),
+                   &varId);
       if (varId != 0) {
         ProcessLoad(varId);
       }

@@ -603,10 +603,10 @@ void TBuiltIns::initialize(int version, EProfile profile, const SpvVersion& spvV
             "dvec3  reflect(dvec3 , dvec3 );"
             "dvec4  reflect(dvec4 , dvec4 );"
 
-            "double refract(double, double, double);"
-            "dvec2  refract(dvec2 , dvec2 , double);"
-            "dvec3  refract(dvec3 , dvec3 , double);"
-            "dvec4  refract(dvec4 , dvec4 , double);"
+            "double refract(double, double, float);"
+            "dvec2  refract(dvec2 , dvec2 , float);"
+            "dvec3  refract(dvec3 , dvec3 , float);"
+            "dvec4  refract(dvec4 , dvec4 , float);"
 
             "dmat2 matrixCompMult(dmat2, dmat2);"
             "dmat3 matrixCompMult(dmat3, dmat3);"
@@ -6569,6 +6569,7 @@ void TBuiltIns::addGatherFunctions(TSampler sampler, const TString& typeName, in
                         break;
                     case 2:
                         s.append("Offsets");
+                        break;
                     default:
                         break;
                     }
@@ -6680,6 +6681,7 @@ void TBuiltIns::addGatherFunctions(TSampler sampler, const TString& typeName, in
                                 break;
                             case 2:
                                 s.append("Offsets");
+                                break;
                             default:
                                 break;
                             }
