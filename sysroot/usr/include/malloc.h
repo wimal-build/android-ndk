@@ -23,8 +23,9 @@
 
 __BEGIN_DECLS
 
-#if defined(__clang__)
-#define __BIONIC_ALLOC_SIZE(...) /* clang doesn't support attribute alloc_size. */
+// Remove the workaround once b/37423073 is fixed.
+#if defined(__clang__) && !__has_attribute(alloc_size)
+#define __BIONIC_ALLOC_SIZE(...)
 #else
 #define __BIONIC_ALLOC_SIZE(...) __attribute__((__alloc_size__(__VA_ARGS__)))
 #endif
@@ -82,6 +83,15 @@ struct mallinfo mallinfo(void);
 #if __ANDROID_API__ >= 23
 int malloc_info(int, FILE*) __INTRODUCED_IN(23);
 #endif /* __ANDROID_API__ >= 23 */
+
+
+/* mallopt options */
+#define M_DECAY_TIME -100
+
+
+#if __ANDROID_API__ >= 26
+int mallopt(int, int) __INTRODUCED_IN(26);
+#endif /* __ANDROID_API__ >= 26 */
 
 
 __END_DECLS

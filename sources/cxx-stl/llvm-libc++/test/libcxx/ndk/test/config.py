@@ -5,7 +5,7 @@ import lit.util  # pylint: disable=import-error
 import libcxx.test.config
 import libcxx.test.target_info
 import libcxx.android.build
-import libcxx.android.test.format
+import libcxx.ndk.test.format
 
 
 class AndroidTargetInfo(libcxx.test.target_info.DefaultTargetInfo):
@@ -93,6 +93,8 @@ class Configuration(libcxx.test.config.Configuration):
         if triple.startswith('arm-'):
             self.cxx.link_flags.append('-lunwind')
             self.cxx.link_flags.append('-latomic')
+        elif triple.startswith('mipsel-'):
+            self.cxx.link_flags.append('-latomic')
 
         self.cxx.link_flags.append('-lgcc')
 
@@ -100,8 +102,7 @@ class Configuration(libcxx.test.config.Configuration):
         self.cxx.link_flags.append('-lc')
         self.cxx.link_flags.append('-lm')
         self.cxx.link_flags.append('-ldl')
-        device_api = int(self.get_lit_conf('device_api_level'))
-        if device_api >= 16:
+        if self.get_lit_bool('use_pie'):
             self.cxx.link_flags.append('-pie')
 
     def configure_features(self):
@@ -112,11 +113,13 @@ class Configuration(libcxx.test.config.Configuration):
         # Note that we require that the caller has cleaned this directory,
         # ensured its existence, and copied libc++_shared.so into it.
         tmp_dir = getattr(self.config, 'device_dir', '/data/local/tmp/libcxx')
+        build_only = self.get_lit_conf('build_only', False)
 
-        return libcxx.android.test.format.TestFormat(
+        return libcxx.ndk.test.format.TestFormat(
             self.cxx,
             self.libcxx_src_root,
             self.libcxx_obj_root,
             tmp_dir,
             getattr(self.config, 'timeout', '300'),
-            exec_env={'LD_LIBRARY_PATH': tmp_dir})
+            exec_env={'LD_LIBRARY_PATH': tmp_dir},
+            build_only=build_only)

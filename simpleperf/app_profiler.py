@@ -45,11 +45,11 @@ class AppProfiler(object):
     def __init__(self, config):
         # check config variables
         config_names = ['app_package_name', 'native_lib_dir', 'apk_file_path',
-                        'recompile_app', 'restart_app', 'main_activity',
+                        'recompile_app', 'launch_activity', 'launch_inst_test',
                         'record_options', 'perf_data_path', 'adb_path', 'readelf_path',
                         'binary_cache_dir']
         for name in config_names:
-            if not config.has_key(name):
+            if name not in config:
                 log_fatal('config [%s] is missing' % name)
         native_lib_dir = config.get('native_lib_dir')
         if native_lib_dir and not os.path.isdir(native_lib_dir):
@@ -121,7 +121,7 @@ class AppProfiler(object):
         self.adb.set_property('security.perf_harden', '0')
         if self.is_root_device:
             # We can enable kernel symbols
-            self.adb.run(['shell', 'echo', '0', '>/proc/sys/kernel/kptr_restrict'])
+            self.adb.run(['shell', 'echo 0 >/proc/sys/kernel/kptr_restrict'])
 
 
     def _recompile_app(self):
@@ -147,29 +147,38 @@ class AppProfiler(object):
 
 
     def _restart_app(self):
-        if not self.config['restart_app']:
+        if not self.config['launch_activity'] and not self.config['launch_inst_test']:
             return
+
         pid = self._find_app_process()
         if pid is not None:
-            self.adb.run(['shell', 'run-as', self.config['app_package_name'],
-                          'kill', '-9', str(pid)])
+            self.run_in_app_dir(['kill', '-9', str(pid)])
             time.sleep(1)
-        activity = self.config['app_package_name'] + '/' + self.config['main_activity']
-        result = self.adb.run(['shell', 'am', 'start', '-n', activity])
-        if not result:
-            log_fatal("Can't start activity %s" % activity)
+
+        if self.config['launch_activity']:
+            activity = self.config['app_package_name'] + '/' + self.config['launch_activity']
+            result = self.adb.run(['shell', 'am', 'start', '-n', activity])
+            if not result:
+                log_fatal("Can't start activity %s" % activity)
+        else:
+            runner = self.config['app_package_name'] + '/android.support.test.runner.AndroidJUnitRunner'
+            result = self.adb.run(['shell', 'am', 'instrument', '-e', 'class',
+                                   self.config['launch_inst_test'], runner])
+            if not result:
+                log_fatal("Can't start instrumentation test  %s" % self.config['launch_inst_test'])
+
         for i in range(10):
             pid = self._find_app_process()
             if pid is not None:
-                return pid
+                return
             time.sleep(1)
             log_info('Wait for the app process for %d seconds' % (i + 1))
         log_fatal("Can't find the app process")
 
 
     def _find_app_process(self):
-        result, output = self.adb.run_and_return_output(
-                ['shell', 'run-as', self.config['app_package_name'], 'ps'])
+        ps_args = ['-e'] if self.android_version >= 8 else []
+        result, output = self.adb.run_and_return_output(['shell', 'ps'] + ps_args)
         if not result:
             return None
         output = output.split('\n')
@@ -185,9 +194,7 @@ class AppProfiler(object):
         if self.app_pid is None:
             log_fatal("can't find process for app [%s]" % self.config['app_package_name'])
         if self.device_arch in ['aarch64', 'x86_64']:
-            output = self.adb.check_run_and_return_output(
-                ['shell', 'run-as', self.config['app_package_name'],
-                'cat', '/proc/%d/maps' % self.app_pid])
+            output = self.run_in_app_dir(['cat', '/proc/%d/maps' % self.app_pid])
             if output.find('linker64') != -1:
                 self.app_arch = self.device_arch
             else:
@@ -200,10 +207,8 @@ class AppProfiler(object):
     def _download_simpleperf(self):
         simpleperf_binary = get_target_binary_path(self.app_arch, 'simpleperf')
         self.adb.check_run(['push', simpleperf_binary, '/data/local/tmp'])
-        self.adb.check_run(['shell', 'run-as', self.config['app_package_name'],
-                            'cp', '/data/local/tmp/simpleperf', '.'])
-        self.adb.check_run(['shell', 'run-as', self.config['app_package_name'],
-                            'chmod', 'a+x', 'simpleperf'])
+        self.run_in_app_dir(['cp', '/data/local/tmp/simpleperf', '.'])
+        self.run_in_app_dir(['chmod', 'a+x', 'simpleperf'])
 
 
     def _download_native_libs(self):
@@ -222,8 +227,7 @@ class AppProfiler(object):
                     filename_dict[file] = path
                 else:
                     log_info('%s is worse than %s' % (path, old_path))
-        maps = self.adb.check_run_and_return_output(['shell', 'run-as',
-                  self.config['app_package_name'], 'cat', '/proc/%d/maps' % self.app_pid])
+        maps = self.run_in_app_dir(['cat', '/proc/%d/maps' % self.app_pid])
         searched_lib = dict()
         for item in maps.split():
             if item.endswith('.so') and searched_lib.get(item) is None:
@@ -235,10 +239,8 @@ class AppProfiler(object):
                 if path is None:
                     continue
                 self.adb.check_run(['push', path, '/data/local/tmp'])
-                self.adb.check_run(['shell', 'run-as', self.config['app_package_name'],
-                                    'mkdir', '-p', dirname])
-                self.adb.check_run(['shell', 'run-as', self.config['app_package_name'],
-                                    'cp', '/data/local/tmp/' + filename, dirname])
+                self.run_in_app_dir(['mkdir', '-p', dirname])
+                self.run_in_app_dir(['cp', '/data/local/tmp/' + filename, dirname])
 
 
     def _is_lib_better(self, new_path, old_path):
@@ -263,23 +265,63 @@ class AppProfiler(object):
 
 
     def start_and_wait_profiling(self):
-        self.adb.check_run(['shell', 'run-as', self.config['app_package_name'],
-            './simpleperf', 'record', self.config['record_options'], '-p',
-            str(self.app_pid), '--symfs', '.'])
+        subproc = None
+        returncode = None
+        try:
+            args = self.get_run_in_app_dir_args([
+                './simpleperf', 'record', self.config['record_options'], '-p',
+                str(self.app_pid), '--symfs', '.'])
+            adb_args = [self.adb.adb_path] + args
+            log_debug('run adb cmd: %s' % adb_args)
+            subproc = subprocess.Popen(adb_args)
+            returncode = subproc.wait()
+        except KeyboardInterrupt:
+            if subproc:
+                self.stop_profiling()
+                returncode = 0
+        log_debug('run adb cmd: %s [result %s]' % (adb_args, returncode == 0))
+
+
+    def stop_profiling(self):
+        """ Stop profiling by sending SIGINT to simpleperf, and wait until it exits
+            to make sure perf.data is completely generated."""
+        has_killed = False
+        while True:
+            (result, _) = self.run_in_app_dir(['pidof', 'simpleperf'], check_result=False)
+            if not result:
+                break
+            if not has_killed:
+                has_killed = True
+                self.run_in_app_dir(['pkill', '-l', '2', 'simpleperf'], check_result=False)
+            time.sleep(1)
 
 
     def collect_profiling_data(self):
-        self.adb.check_run(['shell', 'run-as', self.config['app_package_name'],
-                            'chmod', 'a+rw', 'perf.data'])
-        self.adb.check_run(['shell', 'cp',
-            '/data/data/%s/perf.data' % self.config['app_package_name'], '/data/local/tmp'])
-        self.adb.check_run(['pull', '/data/local/tmp/perf.data', self.config['perf_data_path']])
+        self.run_in_app_dir(['cat perf.data | tee /data/local/tmp/perf.data >/dev/null'])
+        self.adb.check_run_and_return_output(['pull', '/data/local/tmp/perf.data',
+                                              self.config['perf_data_path']])
         config = copy.copy(self.config)
         config['symfs_dirs'] = []
         if self.config['native_lib_dir']:
             config['symfs_dirs'].append(self.config['native_lib_dir'])
         binary_cache_builder = BinaryCacheBuilder(config)
         binary_cache_builder.build_binary_cache()
+
+
+    def run_in_app_dir(self, args, stdout_file=None, check_result=True):
+        args = self.get_run_in_app_dir_args(args)
+        if check_result:
+            return self.adb.check_run_and_return_output(args, stdout_file)
+        else:
+            return self.adb.run_and_return_output(args, stdout_file)
+
+
+    def get_run_in_app_dir_args(self, args):
+        if self.is_root_device:
+            return ['shell', 'cd /data/data/' + self.config['app_package_name'] + ' && ' +
+                      (' '.join(args))]
+        else:
+            return ['shell', 'run-as', self.config['app_package_name']] + args
 
 
 if __name__ == '__main__':

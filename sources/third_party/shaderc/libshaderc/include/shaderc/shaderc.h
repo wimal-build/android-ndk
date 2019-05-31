@@ -179,7 +179,8 @@ typedef enum {
 // for each new use.
 //      shaderc_compiler_t compiler = shaderc_compiler_initialize();
 //      shaderc_compilation_result_t result = shaderc_compile_into_spv(
-//          compiler, "int main() {}", 13, shaderc_glsl_vertex_shader, "main");
+//          compiler, "#version 450\nvoid main() {}", 27,
+//          shaderc_glsl_vertex_shader, "main.vert", "main", nullptr);
 //      // Do stuff with compilation results.
 //      shaderc_result_release(result);
 //      shaderc_compiler_release(compiler);
@@ -189,7 +190,8 @@ typedef enum {
 //      shaderc_compiler_t compiler = shaderc_compiler_initialize();
 //      // On the same, other or multiple simultaneous threads.
 //      shaderc_compilation_result_t result = shaderc_compile_into_spv(
-//          compiler, "int main() {}", 13, shaderc_glsl_vertex_shader, "main");
+//          compiler, "#version 450\nvoid main() {}", 27,
+//          shaderc_glsl_vertex_shader, "main.vert", "main", nullptr);
 //      // Do stuff with compilation results.
 //      shaderc_result_release(result);
 //      // Once no more compilations are to happen.
@@ -278,6 +280,8 @@ void shaderc_compile_options_set_forced_version_profile(
 // the contents of the result, and those contents must remain valid until the
 // second callback is invoked to release the result.  Both callbacks take a
 // user_data argument to specify the client context.
+// To return an error, set the source_name to an empty string and put your
+// error message in content.
 
 // An include result.
 typedef struct shaderc_include_result {
@@ -285,9 +289,11 @@ typedef struct shaderc_include_result {
   // in the sense that it should be a unique name in the context of the
   // includer.  For example, if the includer maps source names to files in
   // a filesystem, then this name should be the absolute path of the file.
+  // For a failed inclusion, this string is empty.
   const char* source_name;
   size_t source_name_length;
-  // The text contents of the source file.
+  // The text contents of the source file in the normal case.
+  // For a failed inclusion, this contains the error message.
   const char* content;
   size_t content_length;
   // User data to be passed along with this request.
@@ -345,6 +351,11 @@ void shaderc_compile_options_set_warnings_as_errors(
 // Sets a resource limit.
 void shaderc_compile_options_set_limit(
     shaderc_compile_options_t options, shaderc_limit limit, int value);
+
+// Sets whether the compiler should automatically assign bindings to uniforms
+// that aren't already explicitly bound in the shader source.
+void shaderc_compile_options_set_auto_bind_uniforms(
+    shaderc_compile_options_t options, bool auto_bind);
 
 // An opaque handle to the results of a call to any shaderc_compile_into_*()
 // function.

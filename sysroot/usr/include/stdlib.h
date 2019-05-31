@@ -106,17 +106,18 @@ long double strtold(const char*, char**) __INTRODUCED_IN(21);
 
 
 
-#if __ANDROID_API__ >= __ANDROID_API_FUTURE__
-unsigned long strtoul_l(const char*, char**, int, locale_t) __INTRODUCED_IN_FUTURE;
-#endif /* __ANDROID_API__ >= __ANDROID_API_FUTURE__ */
+#if __ANDROID_API__ >= 26
+unsigned long strtoul_l(const char*, char**, int, locale_t) __INTRODUCED_IN(26);
+#endif /* __ANDROID_API__ >= 26 */
 
 
 int atoi(const char*) __attribute_pure__;
 long atol(const char*) __attribute_pure__;
 long long atoll(const char*) __attribute_pure__;
 
-char* realpath(const char* path, char* resolved);
-int system(const char* string);
+char * realpath(const char *path, char *resolved) __overloadable
+        __RENAME_CLANG(realpath);
+int system(const char *string);
 
 void* bsearch(const void* key, const void* base0, size_t nmemb, size_t size,
               int (*compar)(const void*, const void*));
@@ -167,9 +168,9 @@ int ptsname_r(int, char*, size_t);
 int unlockpt(int);
 
 
-#if __ANDROID_API__ >= __ANDROID_API_FUTURE__
-int getsubopt(char**, char* const*, char**) __INTRODUCED_IN_FUTURE;
-#endif /* __ANDROID_API__ >= __ANDROID_API_FUTURE__ */
+#if __ANDROID_API__ >= 26
+int getsubopt(char**, char* const*, char**) __INTRODUCED_IN(26);
+#endif /* __ANDROID_API__ >= 26 */
 
 
 typedef struct {
@@ -201,7 +202,7 @@ void setprogname(const char*) __INTRODUCED_IN(21);
 #endif /* __ANDROID_API__ >= 21 */
 
 
-int mblen(const char*, size_t) __INTRODUCED_IN_FUTURE __VERSIONER_NO_GUARD;
+int mblen(const char*, size_t) __INTRODUCED_IN(26) __VERSIONER_NO_GUARD;
 size_t mbstowcs(wchar_t*, const char*, size_t);
 int mbtowc(wchar_t*, const char*, size_t) __INTRODUCED_IN(21) __VERSIONER_NO_GUARD;
 int wctomb(char*, wchar_t) __INTRODUCED_IN(21) __VERSIONER_NO_GUARD;
@@ -213,31 +214,52 @@ size_t __ctype_get_mb_cur_max(void) __INTRODUCED_IN(21);
 #define MB_CUR_MAX __ctype_get_mb_cur_max()
 #else
 /*
- * 4 is only true for UTF-8 locales, but that's what we default to. We'll need
- * the NDK compatibility library to fix this properly.
+ * Pre-L we didn't have any locale support and so we were always the POSIX
+ * locale. POSIX specifies that MB_CUR_MAX for the POSIX locale is 1:
+ * http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/stdlib.h.html
  */
-#define MB_CUR_MAX 4
+#define MB_CUR_MAX 1
 #endif
 
 #if defined(__BIONIC_FORTIFY)
+#define __realpath_buf_too_small_str \
+    "realpath output parameter must be NULL or a >= PATH_MAX bytes buffer"
+
+/* PATH_MAX is unavailable without polluting the namespace, but it's always 4096 on Linux */
+#define __PATH_MAX 4096
+
+#if defined(__clang__)
+
+__BIONIC_ERROR_FUNCTION_VISIBILITY
+char* realpath(const char* path, char* resolved) __overloadable
+    __enable_if(__bos(resolved) != __BIONIC_FORTIFY_UNKNOWN_SIZE &&
+                __bos(resolved) < __PATH_MAX, __realpath_buf_too_small_str)
+    __errorattr(__realpath_buf_too_small_str);
+
+/* No need for a FORTIFY version; the only things we can catch are at
+ * compile-time.
+ */
+
+#else /* defined(__clang__) */
 
 char* __realpath_real(const char*, char*) __RENAME(realpath);
-__errordecl(__realpath_size_error, "realpath output parameter must be NULL or a >= PATH_MAX bytes buffer");
+__errordecl(__realpath_size_error, __realpath_buf_too_small_str);
 
-#if !defined(__clang__)
 __BIONIC_FORTIFY_INLINE
 char* realpath(const char* path, char* resolved) {
     size_t bos = __bos(resolved);
 
-    /* PATH_MAX is unavailable without polluting the namespace, but it's always 4096 on Linux */
-    if (bos != __BIONIC_FORTIFY_UNKNOWN_SIZE && bos < 4096) {
+    if (bos != __BIONIC_FORTIFY_UNKNOWN_SIZE && bos < __PATH_MAX) {
         __realpath_size_error();
     }
 
     return __realpath_real(path, resolved);
 }
-#endif
 
+#endif /* defined(__clang__) */
+
+#undef __PATH_MAX
+#undef __realpath_buf_too_small_str
 #endif /* defined(__BIONIC_FORTIFY) */
 
 #if __ANDROID_API__ >= __ANDROID_API_L__
@@ -259,12 +281,12 @@ long double strtold_l(const char*, char**, locale_t) __INTRODUCED_IN(21);
 // Implemented as static inlines before 21.
 #endif
 
-#if __ANDROID_API__ >= __ANDROID_API_FUTURE__
-double strtod_l(const char*, char**, locale_t) __INTRODUCED_IN_FUTURE;
-float strtof_l(const char*, char**, locale_t) __INTRODUCED_IN_FUTURE;
-long strtol_l(const char*, char**, int, locale_t) __INTRODUCED_IN_FUTURE;
+#if __ANDROID_API__ >= __ANDROID_API_O__
+double strtod_l(const char*, char**, locale_t) __INTRODUCED_IN(26);
+float strtof_l(const char*, char**, locale_t) __INTRODUCED_IN(26);
+long strtol_l(const char*, char**, int, locale_t) __INTRODUCED_IN(26);
 #else
-// Implemented as static inlines.
+// Implemented as static inlines before 26.
 #endif
 
 __END_DECLS

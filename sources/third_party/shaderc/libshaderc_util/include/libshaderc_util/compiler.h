@@ -139,7 +139,8 @@ class Compiler {
         enabled_opt_passes_(),
         target_env_(TargetEnv::Vulkan),
         source_language_(SourceLanguage::GLSL),
-        limits_(kDefaultTBuiltInResource) {}
+        limits_(kDefaultTBuiltInResource),
+        auto_bind_uniforms_(false) {}
 
   // Requests that the compiler place debug information into the object code,
   // such as identifier names and line numbers.
@@ -177,6 +178,10 @@ class Compiler {
 
   // Returns the current limit.
   int GetLimit(Limit limit) const;
+
+  // Set whether the compiler automatically assigns bindings to
+  // uniform variables that don't have explicit bindings.
+  void SetAutoBindUniforms(bool auto_bind) { auto_bind_uniforms_ = auto_bind; }
 
   // Compiles the shader source in the input_source_string parameter.
   //
@@ -327,6 +332,10 @@ class Compiler {
 
   // The resource limits to be used.
   TBuiltInResource limits_;
+
+  // True if the compiler should automatically bind uniforms that don't
+  // have explicit bindings.
+  bool auto_bind_uniforms_;
 };
 
 // Converts a string to a vector of uint32_t by copying the content of a given

@@ -28,9 +28,16 @@ import os.path
 import re
 import subprocess
 import sys
-from tkFont import *
-from Tkinter import *
-from ttk import *
+
+try:
+    from tkinter import *
+    from tkinter.font import Font
+    from tkinter.ttk import *
+except ImportError:
+    from Tkinter import *
+    from tkFont import Font
+    from ttk import *
+
 from utils import *
 
 PAD_X = 3
@@ -82,20 +89,55 @@ class ReportItem(object):
       strs.append('%s' % self.call_tree)
     return '\n'.join(strs)
 
+class EventReport(object):
 
-def parse_report_items(lines):
-  report_items = []
+  """Representing report for one event attr."""
+
+  def __init__(self, common_report_context):
+    self.context = common_report_context[:]
+    self.title_line = None
+    self.report_items = []
+
+
+def parse_event_reports(lines):
+  # Parse common report context
+  common_report_context = []
+  line_id = 0
+  while line_id < len(lines):
+    line = lines[line_id]
+    if not line or line.find('Event:') == 0:
+      break
+    common_report_context.append(line)
+    line_id += 1
+
+  event_reports = []
+  in_report_context = True
+  cur_event_report = EventReport(common_report_context)
   cur_report_item = None
   call_tree_stack = {}
   vertical_columns = []
   last_node = None
 
-  for line in lines:
+  has_skipped_callgraph = False
+
+  for line in lines[line_id:]:
     if not line:
+      in_report_context = not in_report_context
+      if in_report_context:
+        cur_event_report = EventReport(common_report_context)
       continue
-    if not line[0].isspace():
+
+    if in_report_context:
+      cur_event_report.context.append(line)
+      if line.find('Event:') == 0:
+        event_reports.append(cur_event_report)
+      continue
+
+    if cur_event_report.title_line is None:
+      cur_event_report.title_line = line
+    elif not line[0].isspace():
       cur_report_item = ReportItem(line)
-      report_items.append(cur_report_item)
+      cur_event_report.report_items.append(cur_report_item)
       # Each report item can have different column depths.
       vertical_columns = []
     else:
@@ -106,6 +148,10 @@ def parse_report_items(lines):
 
       if not line.strip('| \t'):
         continue
+      if line.find('skipped in brief callgraph mode') != -1:
+        has_skipped_callgraph = True
+        continue
+
       if line.find('-') == -1:
         line = line.strip('| \t')
         function_name = line
@@ -135,7 +181,10 @@ def parse_report_items(lines):
         call_tree_stack[depth] = node
         last_node = node
 
-  return report_items
+  if has_skipped_callgraph:
+      log_warning('some callgraphs are skipped in brief callgraph mode')
+
+  return event_reports
 
 
 class ReportWindow(object):
@@ -146,7 +195,7 @@ class ReportWindow(object):
     frame = Frame(master)
     frame.pack(fill=BOTH, expand=1)
 
-    font = Font(family='courier', size=10)
+    font = Font(family='courier', size=12)
 
     # Report Context
     for line in report_context:
@@ -197,20 +246,19 @@ class ReportWindow(object):
 
   def display_call_tree(self, tree, parent_id, node, indent):
     id = parent_id
-    indent_str = '  ' * indent
+    indent_str = '    ' * indent
 
     if node.percentage != 100.0:
-      percentage_str = '%.2f%%' % node.percentage
+      percentage_str = '%.2f%% ' % node.percentage
     else:
       percentage_str = ''
-    first_open = True if node.percentage == 100.0 else False
 
     for i in range(len(node.call_stack)):
       s = indent_str
-      s += '+ ' if node.children else '  '
+      s += '+ ' if node.children and i == len(node.call_stack) - 1 else '  '
       s += percentage_str if i == 0 else ' ' * len(percentage_str)
       s += node.call_stack[i]
-      child_open = first_open if i == 0 else True
+      child_open = False if i == len(node.call_stack) - 1 and indent > 1 else True
       id = tree.insert(id, 'end', None, values=[s], open=child_open,
                        tag='set_font')
 
@@ -224,28 +272,21 @@ def display_report_file(report_file):
   fh.close()
 
   lines = [x.rstrip() for x in lines]
+  event_reports = parse_event_reports(lines)
 
-  blank_line_index = -1
-  for i in range(len(lines)):
-    if not lines[i]:
-      blank_line_index = i
-      break
-  assert blank_line_index != -1
-  assert blank_line_index + 1 < len(lines)
-
-  report_context = lines[:blank_line_index]
-  title_line = lines[blank_line_index + 1]
-  report_items = parse_report_items(lines[blank_line_index + 2:])
-
-  root = Tk()
-  ReportWindow(root, report_context, title_line, report_items)
-  root.mainloop()
+  if event_reports:
+    root = Tk()
+    for i in range(len(event_reports)):
+      report = event_reports[i]
+      parent = root if i == 0 else Toplevel(root)
+      ReportWindow(parent, report.context, report.title_line, report.report_items)
+    root.mainloop()
 
 
 def call_simpleperf_report(args, report_file):
   output_fh = open(report_file, 'w')
   simpleperf_path = get_host_binary_path('simpleperf')
-  args = [simpleperf_path, 'report'] + args
+  args = [simpleperf_path, 'report', '--full-callgraph'] + args
   subprocess.check_call(args, stdout=output_fh)
   output_fh.close()
 

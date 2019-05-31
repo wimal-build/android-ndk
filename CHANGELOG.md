@@ -11,101 +11,95 @@ For Android Studio issues, follow the docs on the [Android Studio site].
 Announcements
 -------------
 
- * The platform headers have been synchronized with the Android platform. This
-   means that the headers are now up to date, accurate, and header only bug
-   fixes will affect all API levels. Prior to this, the M and N headers were
-   actually the L headers, all the headers did not actually match the platform
-   level they were supposedly for (declared functions that didn't exist, didn't
-   declare ones that did), and many of the old API levels had missing or
-   incorrect constants that were in newer API levels.
+ * [Unified Headers] are now enabled by default.
 
-   Since these are in some cases radically different from those we've previously
-   shipped, these are not enabled by default. See [Unified Headers] for details
-   on using the updated headers.
+   **Note**: The deprecated headers will be removed in a future release, most
+   likely r16. If they do not work for you, file bugs now.
 
-   **Note**: The legacy headers will be removed in a future release. It is
-   likely that r15 will default to using these while still being optional. If
-   all goes well, the legacy headers will be removed in r16, so please test them
-   now.
+   For migration tips, see [Unified Headers Migration Notes].
 
  * GCC is no longer supported. It will not be removed from the NDK just yet, but
    is no longer receiving backports. It cannot be removed until after libc++ has
    become stable enough to be the default, as some parts of gnustl are still
    incompatible with Clang. It will likely be removed after that point.
 
+ * Gingerbread (android-9) is no longer supported. The minimum API level target
+   in the NDK is now Ice Cream Sandwich (android-14). If your `APP_PLATFORM` is
+   set lower than android-14, android-14 will be used instead.
+
+ * The CMake toolchain file now supports building assembly code written in YASM
+   to run on x86 and x86-64 architectures. To learn more, see [YASM in CMake].
+
 [Unified Headers]: docs/UnifiedHeaders.md
+[Unified Headers Migration Notes]: docs/UnifiedHeadersMigration.md
+[YASM in CMake]: https://android-dot-devsite.googleplex.com/ndk/guides/cmake.html#yasm-cmake
 
-r14b
-====
+r15c
+----
 
- * Fixed issue of XSI `strerror_r` not being available until android-23 with
-   unified headers: https://github.com/android-ndk/ndk/issues/324.
- * Fixed issue of `__ANDROID_API__` not being set for standalone toolchains with
-   unified headers on Windows: https://github.com/android-ndk/ndk/issues/321.
- * Fixed issue of not being able to find gnustl headers with standalone
-   toolchains for mips32: https://github.com/android-ndk/ndk/issues/310.
- * Removed accidentally exposed non-NDK API Vulkan headers. The functions in the
-   non-API headers themselves weren't exposed, so these weren't usable anyways.
+ * Fixes for `_FILE_OFFSET_BITS=64` APIs. See
+   https://github.com/android-ndk/ndk/issues/459 and
+   https://github.com/android-ndk/ndk/issues/442.
+ * Fix termios.h APIs for old target APIs. See
+   https://github.com/android-ndk/ndk/issues/441.
+ * Added an inline for `ffs` to maintain compatibility with the deprecated
+   headers. See https://github.com/android-ndk/ndk/issues/439.
+ * Added legacy pthread API declarations for compatibility with old releases.
+   See https://github.com/android-ndk/ndk/issues/420 and
+   https://github.com/android-ndk/ndk/issues/423.
+
+r15b
+----
+
+ * Fix libsync header/library mismatch:
+   https://issuetracker.google.com/62229958.
+ * Several libc header updates to improve compatibility with code written for
+   other systems.
 
 APIs
 ----
 
- * `_BSD_SOURCE` will never be defined by the NDK when using unified headers;
-   the user's setting will be obeyed. When using the deprecated headers, whether
-   or not this was defined depended on which headers you included. To continue
-   using `_BSD_SOURCE`, `#define` it in your source files or pass it on the
-   command line as you would for typical Linux code.
+ * Added native APIs for Android O. To learn more about these APIs, see the
+   [Native APIs overview].
+    * [AAudio API]
+    * [Hardware Buffer API]
+    * [Shared Memory API]
 
-ndk-build
----------
+[Native APIs overview]: https://developer.android.com/ndk/guides/stable_apis.html#a26
+[AAudio API]: https://developer.android.com/ndk/reference/a_audio_8h.html
+[Hardware Buffer API]: https://developer.android.com/ndk/reference/hardware__buffer_8h.html
+[Shared Memory API]: https://developer.android.com/ndk/reference/sharedmem_8h.html
 
- * Module builds will now fail if they have any missing dependencies. To revert
-   to the old behavior, set `APP_ALLOW_MISSING_DEPS=true`. See
-   https://github.com/android-ndk/ndk/issues/208.
+NDK
+---
 
-CMake
+ * `awk` is no longer in the NDK. We've replaced all uses of awk with Python.
+
+Clang
 -----
 
- * RTTI and exceptions are now on by default. This was done for improved
-   compatibility with existing CMake projects. See
-   https://github.com/android-ndk/ndk/issues/212.
+ * Clang has been updated to build 4053586. This is built from Clang 5.0 SVN at
+   r300080.
+ * Clang now supports OpenMP (except on MIPS/MIPS64):
+   https://github.com/android-ndk/ndk/issues/9.
 
 libc++
 ------
 
- * libc++abi has been updated and now has a fallback implementation of
-   `__cxa_thread_atexit_impl`. Non-global `thread_local` variables with
-   non-trivial destructors are now supported.
-
-Clang/LLVM
-----------
-
- * The x86 ASAN issues noted since r11 appear to have been emulator specific.
-   Up to date emulators no longer have this issue.
- * LTO with Clang now builds without errors on Linux and Darwin. This fixes
-   https://github.com/android-ndk/ndk/issues/108.
-
-RenderScript
-------------
-
- * The RenderScript tools are now included in the NDK once again. This fixes
-   https://github.com/android-ndk/ndk/issues/7.
+ * We've begun slimming down and improving `libandroid_support` to fix libc++
+   reliability issues. https://github.com/android-ndk/ndk/issues/300.
 
 Known Issues
 ------------
 
  * This is not intended to be a comprehensive list of all outstanding bugs.
- * Gradle does not yet support unified headers.
-
-Won't Fix
----------
-
-These issues will not be fixed. They affect only GCC, which is deprecated.
-
- * Standlone toolchains using libc++ and GCC do not work. This seems to be a bug
-   in GCC. See the following commit message for more details:
-   https://android-review.googlesource.com/#/c/247498
- * Standalone toolchains using GCC do not work out of the box with unified
-   headers. They can be made to work by passing `-D__ANDROID_API__=21`
-   (replacing 21 with the same API level you passed to
-   `make_standalone_toolchain.py`) when compiling.
+ * gabi++ (and therefore stlport) binaries can segfault when built for armeabi:
+   https://github.com/android-ndk/ndk/issues/374.
+ * `ndk-gdb` doesn't work on the Samsung Galaxy S8.
+   https://android-review.googlesource.com/408522/ fixes this and will be in a
+   future release. There is no workaround (but debugging in Android Studio
+   should work).
+ * MIPS64 must use the integrated assembler. Clang defaults to using binutils
+   rather than the integrated assmebler for this target. ndk-build and cmake
+   handle this for you, but make sure to use `-fintegrated-as` for MIPS64 for
+   custom build systems. See https://github.com/android-ndk/ndk/issues/399.

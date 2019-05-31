@@ -151,6 +151,14 @@ spv_result_t DataRulesPass(ValidationState_t& _,
 spv_result_t InstructionPass(ValidationState_t& _,
                              const spv_parsed_instruction_t* inst);
 
+/// Performs decoration validation.
+spv_result_t ValidateDecorations(ValidationState_t& _);
+
+/// Validates that type declarations are unique, unless multiple declarations
+/// of the same data type are allowed by the specification.
+/// (see section 2.8 Types and Variables)
+spv_result_t TypeUniquePass(ValidationState_t& _,
+                            const spv_parsed_instruction_t* inst);
 }  // namespace libspirv
 
 /// @brief Validate the ID usage of the instruction stream
@@ -189,5 +197,16 @@ spv_result_t spvValidateIDs(const spv_instruction_t* pInstructions,
                             const spv_ext_inst_table extInstTable,
                             spv_position position,
                             const spvtools::MessageConsumer& consumer);
+
+namespace spvtools {
+// Performs validation for the SPIRV-V module binary.
+// The main difference between this API and spvValidateBinary is that the
+// "Validation State" is not destroyed upon function return; it lives on and is
+// pointed to by the vstate unique_ptr.
+spv_result_t ValidateBinaryAndKeepValidationState(
+    const spv_const_context context, spv_const_validator_options options,
+    const uint32_t* words, const size_t num_words, spv_diagnostic* pDiagnostic,
+    std::unique_ptr<libspirv::ValidationState_t>* vstate);
+}  // namespace spvtools
 
 #endif  // LIBSPIRV_VALIDATE_H_

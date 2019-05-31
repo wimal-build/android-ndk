@@ -16,12 +16,14 @@
 #define LIBSPIRV_VAL_VALIDATIONSTATE_H_
 
 #include <deque>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "assembly_grammar.h"
+#include "decoration.h"
 #include "diagnostic.h"
 #include "enum_set.h"
 #include "spirv-tools/libspirv.h"
@@ -53,10 +55,23 @@ enum ModuleLayoutSection {
 /// This class manages the state of the SPIR-V validation as it is being parsed.
 class ValidationState_t {
  public:
-  ValidationState_t(const spv_const_context context);
+  // Features that can optionally be turned on by a capability.
+  struct Feature {
+    bool declare_int16_type = false;     // Allow OpTypeInt with 16 bit width?
+    bool declare_float16_type = false;   // Allow OpTypeFloat with 16 bit width?
+    bool free_fp_rounding_mode = false;  // Allow the FPRoundingMode decoration
+                                         // and its vaules to be used without
+                                         // requiring any capability
+  };
+
+  ValidationState_t(const spv_const_context context,
+                    const spv_const_validator_options opt);
 
   /// Returns the context
   spv_const_context context() const { return context_; }
+
+  /// Returns the command line options
+  spv_const_validator_options options() const { return options_; }
 
   /// Forward declares the id in the module
   spv_result_t ForwardDeclareId(uint32_t id);
@@ -125,9 +140,37 @@ class ValidationState_t {
   /// instruction
   bool in_block() const;
 
+  /// Registers the given <id> as an Entry Point.
+  void RegisterEntryPointId(const uint32_t id) {
+    entry_points_.push_back(id);
+    entry_point_interfaces_.insert(std::make_pair(id, std::vector<uint32_t>()));
+  }
+
   /// Returns a list of entry point function ids
-  std::vector<uint32_t>& entry_points() { return entry_points_; }
   const std::vector<uint32_t>& entry_points() const { return entry_points_; }
+
+  /// Adds a new interface id to the interfaces of the given entry point.
+  void RegisterInterfaceForEntryPoint(uint32_t entry_point,
+                                      uint32_t interface) {
+    entry_point_interfaces_[entry_point].push_back(interface);
+  }
+
+  /// Returns the interfaces of a given entry point. If the given id is not a
+  /// valid Entry Point id, std::out_of_range exception is thrown.
+  const std::vector<uint32_t>& entry_point_interfaces(
+      uint32_t entry_point) const {
+    return entry_point_interfaces_.at(entry_point);
+  }
+
+  /// Inserts an <id> to the set of functions that are target of OpFunctionCall.
+  void AddFunctionCallTarget(const uint32_t id) {
+    function_call_targets_.insert(id);
+  }
+
+  /// Returns whether or not a function<id> is the target of OpFunctionCall.
+  bool IsFunctionCallTarget(const uint32_t id) {
+    return (function_call_targets_.find(id) != function_call_targets_.end());
+  }
 
   /// Registers the capability and its dependent capabilities
   void RegisterCapability(SpvCapability cap);
@@ -162,10 +205,41 @@ class ValidationState_t {
   /// Returns the memory model of this module, or Simple if uninitialized.
   SpvMemoryModel memory_model() const;
 
-  AssemblyGrammar& grammar() { return grammar_; }
+  const AssemblyGrammar& grammar() const { return grammar_; }
 
   /// Registers the instruction
   void RegisterInstruction(const spv_parsed_instruction_t& inst);
+
+  /// Registers the decoration for the given <id>
+  void RegisterDecorationForId(uint32_t id, const Decoration& dec) {
+    id_decorations_[id].push_back(dec);
+  }
+
+  /// Registers the list of decorations for the given <id>
+  template <class InputIt>
+  void RegisterDecorationsForId(uint32_t id, InputIt begin, InputIt end) {
+    std::vector<Decoration>& cur_decs = id_decorations_[id];
+    cur_decs.insert(cur_decs.end(), begin, end);
+  }
+
+  /// Registers the list of decorations for the given member of the given
+  /// structure.
+  template <class InputIt>
+  void RegisterDecorationsForStructMember(uint32_t struct_id,
+                                          uint32_t member_index, InputIt begin,
+                                          InputIt end) {
+    RegisterDecorationsForId(struct_id, begin, end);
+    for (auto& decoration : id_decorations_[struct_id]) {
+      decoration.set_struct_member_index(member_index);
+    }
+  }
+
+  /// Returns all the decorations for the given <id>. If no decorations exist
+  /// for the <id>, it registers an empty vector for it in the map and
+  /// returns the empty vector.
+  std::vector<Decoration>& id_decorations(uint32_t id) {
+    return id_decorations_[id];
+  }
 
   /// Finds id's def, if it exists.  If found, returns the definition otherwise
   /// nullptr
@@ -193,17 +267,23 @@ class ValidationState_t {
   void RegisterSampledImageConsumer(uint32_t sampled_image_id,
                                     uint32_t cons_id);
 
-  /// Returns the number of Global Variables
-  uint32_t num_global_vars() { return num_global_vars_; }
+  /// Returns the set of Global Variables.
+  std::unordered_set<uint32_t>& global_vars() { return global_vars_; }
 
-  /// Returns the number of Local Variables
-  uint32_t num_local_vars() { return num_local_vars_; }
+  /// Returns the set of Local Variables.
+  std::unordered_set<uint32_t>& local_vars() { return local_vars_; }
 
-  /// Increments the number of Global Variables
-  void incrementNumGlobalVars() { ++num_global_vars_; }
+  /// Returns the number of Global Variables.
+  size_t num_global_vars() { return global_vars_.size(); }
 
-  /// Increments the number of Local Variables
-  void incrementNumLocalVars() { ++num_local_vars_; }
+  /// Returns the number of Local Variables.
+  size_t num_local_vars() { return local_vars_.size(); }
+
+  /// Inserts a new <id> to the set of Global Variables.
+  void registerGlobalVariable(const uint32_t id) { global_vars_.insert(id); }
+
+  /// Inserts a new <id> to the set of Local Variables.
+  void registerLocalVariable(const uint32_t id) { local_vars_.insert(id); }
 
   /// Sets the struct nesting depth for a given struct ID
   void set_struct_nesting_depth(uint32_t id, uint32_t depth) {
@@ -215,10 +295,30 @@ class ValidationState_t {
     return struct_nesting_depth_[id];
   }
 
+  /// Records that the structure type has a member decorated with a built-in.
+  void RegisterStructTypeWithBuiltInMember(uint32_t id) {
+    builtin_structs_.insert(id);
+  }
+
+  /// Returns true if the struct type with the given Id has a BuiltIn member.
+  bool IsStructTypeWithBuiltInMember(uint32_t id) const {
+    return (builtin_structs_.find(id) != builtin_structs_.end());
+  }
+
+  // Returns the state of optional features.
+  const Feature& features() const { return features_; }
+
+  /// Adds the instruction data to unique_type_declarations_.
+  /// Returns false if an identical type declaration already exists.
+  bool RegisterUniqueTypeDeclaration(const spv_parsed_instruction_t& inst);
+
  private:
   ValidationState_t(const ValidationState_t&);
 
   const spv_const_context context_;
+
+  /// Stores the Validator command line options. Must be a valid options object.
+  const spv_const_validator_options options_;
 
   /// Tracks the number of instructions evaluated by the validator
   int instruction_counter_;
@@ -255,17 +355,35 @@ class ValidationState_t {
   /// IDs that are entry points, ie, arguments to OpEntryPoint.
   std::vector<uint32_t> entry_points_;
 
+  /// Maps an entry point id to its interfaces.
+  std::unordered_map<uint32_t, std::vector<uint32_t>> entry_point_interfaces_;
+
+  /// Functions IDs that are target of OpFunctionCall.
+  std::unordered_set<uint32_t> function_call_targets_;
+
   /// ID Bound from the Header
   uint32_t id_bound_;
 
-  /// Number of Global Variables (Storage Class other than 'Function')
-  uint32_t num_global_vars_;
+  /// Set of Global Variable IDs (Storage Class other than 'Function')
+  std::unordered_set<uint32_t> global_vars_;
 
-  /// Number of Local Variables ('Function' Storage Class)
-  uint32_t num_local_vars_;
+  /// Set of Local Variable IDs ('Function' Storage Class)
+  std::unordered_set<uint32_t> local_vars_;
+
+  /// Set of struct types that have members with a BuiltIn decoration.
+  std::unordered_set<uint32_t> builtin_structs_;
 
   /// Structure Nesting Depth
   std::unordered_map<uint32_t, uint32_t> struct_nesting_depth_;
+
+  /// Stores the list of decorations for a given <id>
+  std::unordered_map<uint32_t, std::vector<Decoration>> id_decorations_;
+
+  /// Stores type declarations which need to be unique (i.e. non-aggregates),
+  /// in the form [opcode, operand words], result_id is not stored.
+  /// Using ordered set to avoid the need for a vector hash function.
+  /// The size of this container is expected not to exceed double-digits.
+  std::set<std::vector<uint32_t>> unique_type_declarations_;
 
   AssemblyGrammar grammar_;
 
@@ -274,6 +392,10 @@ class ValidationState_t {
 
   /// NOTE: See correspoding getter functions
   bool in_function_;
+
+  // The state of optional features.  These are determined by capabilities
+  // declared by the module.
+  Feature features_;
 };
 
 }  /// namespace libspirv

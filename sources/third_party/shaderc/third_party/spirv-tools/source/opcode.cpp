@@ -207,6 +207,17 @@ bool spvOpcodeIsConstantOrUndef(const SpvOp opcode) {
   return opcode == SpvOpUndef || spvOpcodeIsConstant(opcode);
 }
 
+bool spvOpcodeIsScalarSpecConstant(const SpvOp opcode) {
+  switch (opcode) {
+    case SpvOpSpecConstantTrue:
+    case SpvOpSpecConstantFalse:
+    case SpvOpSpecConstant:
+      return true;
+    default:
+      return false;
+  }
+}
+
 int32_t spvOpcodeIsComposite(const SpvOp opcode) {
   switch (opcode) {
     case SpvOpTypeVector:
@@ -255,6 +266,8 @@ int32_t spvOpcodeGeneratesType(SpvOp op) {
     case SpvOpTypeReserveId:
     case SpvOpTypeQueue:
     case SpvOpTypePipe:
+    case SpvOpTypePipeStorage:
+    case SpvOpTypeNamedBarrier:
       return true;
     default:
       // In particular, OpTypeForwardPointer does not generate a type,

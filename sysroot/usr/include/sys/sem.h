@@ -39,23 +39,31 @@
 
 #include <linux/sem.h>
 
-#define semid_ds semid64_ds
-
 __BEGIN_DECLS
 
+#define semid_ds semid64_ds
 
-#if __ANDROID_API__ >= __ANDROID_API_FUTURE__
-int semctl(int, int, int, ...) __INTRODUCED_IN_FUTURE;
-int semget(key_t, int, int) __INTRODUCED_IN_FUTURE;
-int semop(int, struct sembuf*, size_t) __INTRODUCED_IN_FUTURE;
-#endif /* __ANDROID_API__ >= __ANDROID_API_FUTURE__ */
+union semun {
+  int val;
+  struct semid_ds* buf;
+  unsigned short* array;
+  struct seminfo* __buf;
+  void* __pad;
+};
+
+
+#if __ANDROID_API__ >= 26
+int semctl(int, int, int, ...) __INTRODUCED_IN(26);
+int semget(key_t, int, int) __INTRODUCED_IN(26);
+int semop(int, struct sembuf*, size_t) __INTRODUCED_IN(26);
+#endif /* __ANDROID_API__ >= 26 */
 
 
 #if defined(__USE_GNU)
 
-#if __ANDROID_API__ >= __ANDROID_API_FUTURE__
-int semtimedop(int, struct sembuf*, size_t, const struct timespec*) __INTRODUCED_IN_FUTURE;
-#endif /* __ANDROID_API__ >= __ANDROID_API_FUTURE__ */
+#if __ANDROID_API__ >= 26
+int semtimedop(int, struct sembuf*, size_t, const struct timespec*) __INTRODUCED_IN(26);
+#endif /* __ANDROID_API__ >= 26 */
 
 #endif
 

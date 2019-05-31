@@ -69,7 +69,9 @@ enum {
 
 #define PTHREAD_ONCE_INIT 0
 
+#if __ANDROID_API__ >= __ANDROID_API_N__
 #define PTHREAD_BARRIER_SERIAL_THREAD -1
+#endif
 
 #if defined(__LP64__)
 #define PTHREAD_STACK_MIN (4 * PAGE_SIZE)
@@ -178,6 +180,26 @@ int pthread_mutex_timedlock(pthread_mutex_t* _Nonnull, const struct timespec* _N
 int pthread_mutex_trylock(pthread_mutex_t* _Nonnull);
 int pthread_mutex_unlock(pthread_mutex_t* _Nonnull);
 
+#if defined(__LP32__) && __ANDROID_API__ < 21
+/*
+ * Cruft for supporting old API levels. Pre-L we didn't have the proper POSIX
+ * APIs for things, but instead had some locally grown, artisan equivalents.
+ * Keep exposing the old prototypes on old API levels so we don't regress
+ * functionality.
+ *
+ * See the following bugs:
+ *  * https://github.com/android-ndk/ndk/issues/420
+ *  * https://github.com/android-ndk/ndk/issues/423
+ *  * https://stackoverflow.com/q/44580542/632035
+ */
+
+int pthread_mutex_lock_timeout_np(pthread_mutex_t* mutex, unsigned msecs);
+int pthread_cond_timeout_np(pthread_cond_t* cond, pthread_mutex_t* mutex, unsigned msecs);
+int pthread_cond_timedwait_monotonic_np(pthread_cond_t*, pthread_mutex_t*, const struct timespec*);
+int pthread_cond_timedwait_relative_np(pthread_cond_t* cond, pthread_mutex_t* mutex,
+                                       const struct timespec* reltime);
+#endif
+
 int pthread_once(pthread_once_t* _Nonnull, void (* _Nonnull init_routine)(void));
 
 int pthread_rwlockattr_init(pthread_rwlockattr_t* _Nonnull);
@@ -202,35 +224,37 @@ int pthread_rwlock_trywrlock(pthread_rwlock_t* _Nonnull);
 int pthread_rwlock_unlock(pthread_rwlock_t* _Nonnull);
 int pthread_rwlock_wrlock(pthread_rwlock_t* _Nonnull);
 
-
-#if __ANDROID_API__ >= 24
+#if __ANDROID_API__ >= __ANDROID_API_N__
 int pthread_barrierattr_init(pthread_barrierattr_t* _Nonnull attr) __INTRODUCED_IN(24);
 int pthread_barrierattr_destroy(pthread_barrierattr_t* _Nonnull attr) __INTRODUCED_IN(24);
 int pthread_barrierattr_getpshared(const pthread_barrierattr_t* _Nonnull attr,
                                    int* _Nonnull pshared) __INTRODUCED_IN(24);
 int pthread_barrierattr_setpshared(pthread_barrierattr_t* _Nonnull attr, int pshared)
   __INTRODUCED_IN(24);
+#endif
 
+#if __ANDROID_API__ >= __ANDROID_API_N__
 int pthread_barrier_init(pthread_barrier_t* _Nonnull, const pthread_barrierattr_t*, unsigned)
   __INTRODUCED_IN(24);
 int pthread_barrier_destroy(pthread_barrier_t* _Nonnull) __INTRODUCED_IN(24);
 int pthread_barrier_wait(pthread_barrier_t* _Nonnull) __INTRODUCED_IN(24);
+#endif
 
+#if __ANDROID_API__ >= __ANDROID_API_N__
 int pthread_spin_destroy(pthread_spinlock_t* _Nonnull) __INTRODUCED_IN(24);
 int pthread_spin_init(pthread_spinlock_t* _Nonnull, int) __INTRODUCED_IN(24);
 int pthread_spin_lock(pthread_spinlock_t* _Nonnull) __INTRODUCED_IN(24);
 int pthread_spin_trylock(pthread_spinlock_t* _Nonnull) __INTRODUCED_IN(24);
 int pthread_spin_unlock(pthread_spinlock_t* _Nonnull) __INTRODUCED_IN(24);
-#endif /* __ANDROID_API__ >= 24 */
-
+#endif
 
 pthread_t pthread_self(void) __attribute_const__;
 
 #if defined(__USE_GNU)
 
-#if __ANDROID_API__ >= __ANDROID_API_FUTURE__
-int pthread_getname_np(pthread_t, char* _Nonnull, size_t) __INTRODUCED_IN_FUTURE;
-#endif /* __ANDROID_API__ >= __ANDROID_API_FUTURE__ */
+#if __ANDROID_API__ >= 26
+int pthread_getname_np(pthread_t, char* _Nonnull, size_t) __INTRODUCED_IN(26);
+#endif /* __ANDROID_API__ >= 26 */
 
 #endif
 /* TODO: this should be __USE_GNU too. */
