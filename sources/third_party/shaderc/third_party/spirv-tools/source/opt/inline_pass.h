@@ -18,12 +18,12 @@
 #define LIBSPIRV_OPT_INLINE_PASS_H_
 
 #include <algorithm>
+#include <list>
 #include <memory>
 #include <unordered_map>
 #include <vector>
-#include <list>
 
-#include "def_use_manager.h"
+#include "decoration_manager.h"
 #include "module.h"
 #include "pass.h"
 
@@ -32,28 +32,16 @@ namespace opt {
 
 // See optimizer.hpp for documentation.
 class InlinePass : public Pass {
-
   using cbb_ptr = const ir::BasicBlock*;
 
  public:
-   using GetBlocksFunction =
-     std::function<std::vector<ir::BasicBlock*>*(const ir::BasicBlock*)>;
+  using GetBlocksFunction =
+      std::function<std::vector<ir::BasicBlock*>*(const ir::BasicBlock*)>;
 
   InlinePass();
   virtual ~InlinePass() = default;
 
  protected:
-  // Return the next available Id and increment it.
-  inline uint32_t TakeNextId() { return next_id_++; }
-
-  // Write the next available Id back to the module.
-  inline void FinalizeNextId(ir::Module* module) {
-    module->SetIdBound(next_id_);
-  }
-
-  // Find pointer to type and storage in module, return its resultId,
-  // 0 if not found. TODO(greg-lunarg): Move this into type manager.
-  uint32_t FindPointerToType(uint32_t type_id, SpvStorageClass storage_class);
 
   // Add pointer to type to module and return resultId.
   uint32_t AddPointerToType(uint32_t type_id, SpvStorageClass storage_class);
@@ -62,8 +50,8 @@ class InlinePass : public Pass {
   void AddBranch(uint32_t labelId, std::unique_ptr<ir::BasicBlock>* block_ptr);
 
   // Add conditional branch to end of block |block_ptr|.
-  void AddBranchCond(uint32_t cond_id, uint32_t true_id,
-    uint32_t false_id, std::unique_ptr<ir::BasicBlock>* block_ptr);
+  void AddBranchCond(uint32_t cond_id, uint32_t true_id, uint32_t false_id,
+                     std::unique_ptr<ir::BasicBlock>* block_ptr);
 
   // Add unconditional branch to labelId to end of block block_ptr.
   void AddLoopMerge(uint32_t merge_id, uint32_t continue_id,
@@ -85,8 +73,7 @@ class InlinePass : public Pass {
   uint32_t GetFalseId();
 
   // Map callee params to caller args
-  void MapParams(ir::Function* calleeFn,
-                 ir::UptrVectorIterator<ir::Instruction> call_inst_itr,
+  void MapParams(ir::Function* calleeFn, ir::BasicBlock::iterator call_inst_itr,
                  std::unordered_map<uint32_t, uint32_t>* callee2caller);
 
   // Clone and map callee locals
@@ -131,25 +118,21 @@ class InlinePass : public Pass {
   // call_block_itr is replaced with new_blocks.
   void GenInlineCode(std::vector<std::unique_ptr<ir::BasicBlock>>* new_blocks,
                      std::vector<std::unique_ptr<ir::Instruction>>* new_vars,
-                     ir::UptrVectorIterator<ir::Instruction> call_inst_itr,
+                     ir::BasicBlock::iterator call_inst_itr,
                      ir::UptrVectorIterator<ir::BasicBlock> call_block_itr);
 
   // Return true if |inst| is a function call that can be inlined.
   bool IsInlinableFunctionCall(const ir::Instruction* inst);
 
-  // Returns the id of the merge block declared by a merge instruction in 
-  // this block, if any.  If none, returns zero.
-  uint32_t MergeBlockIdIfAny(const ir::BasicBlock& blk);
-
   // Compute structured successors for function |func|.
   // A block's structured successors are the blocks it branches to
   // together with its declared merge block if it has one.
   // When order matters, the merge block always appears first.
-  // This assures correct depth first search in the presence of early 
+  // This assures correct depth first search in the presence of early
   // returns and kills. If the successor vector contain duplicates
   // if the merge block, they are safely ignored by DFS.
   void ComputeStructuredSuccessors(ir::Function* func);
-  
+
   // Return function to return ordered structure successors for a given block
   // Assumes ComputeStructuredSuccessors() has been called.
   GetBlocksFunction StructuredSuccessorsFunction();
@@ -173,18 +156,13 @@ class InlinePass : public Pass {
       std::vector<std::unique_ptr<ir::BasicBlock>>& new_blocks);
 
   // Initialize state for optimization of |module|
-  void InitializeInline(ir::Module* module);
-
-  // Module being processed by this pass
-  ir::Module* module_;
-
-  // Def/Use database
-  std::unique_ptr<analysis::DefUseManager> def_use_mgr_;
+  void InitializeInline(ir::IRContext* c);
 
   // Map from function's result id to function.
   std::unordered_map<uint32_t, ir::Function*> id2function_;
 
-  // Map from block's label id to block.
+  // Map from block's label id to block. TODO(dnovillo): This is superfluous wrt
+  // opt::CFG. It has functionality not present in opt::CFG. Consolidate.
   std::unordered_map<uint32_t, ir::BasicBlock*> id2block_;
 
   // Set of ids of functions with multiple returns.
@@ -196,16 +174,15 @@ class InlinePass : public Pass {
   // Set of ids of inlinable functions
   std::set<uint32_t> inlinable_;
 
-  // Map from block to its structured successor blocks. See 
-  // ComputeStructuredSuccessors() for definition.
-  std::unordered_map<const ir::BasicBlock*, std::vector<ir::BasicBlock*>>
-      block2structured_succs_;
-
   // result id for OpConstantFalse
   uint32_t false_id_;
 
-  // Next unused ID
-  uint32_t next_id_;
+  // Map from block to its structured successor blocks. See
+  // ComputeStructuredSuccessors() for definition. TODO(dnovillo): This is
+  // superfluous wrt opt::CFG, but it seems to be computed in a slightly
+  // different way in the inliner. Can these be consolidated?
+  std::unordered_map<const ir::BasicBlock*, std::vector<ir::BasicBlock*>>
+      block2structured_succs_;
 };
 
 }  // namespace opt

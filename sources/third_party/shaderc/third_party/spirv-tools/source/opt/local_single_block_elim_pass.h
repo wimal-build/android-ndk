@@ -17,18 +17,17 @@
 #ifndef LIBSPIRV_OPT_LOCAL_SINGLE_BLOCK_ELIM_PASS_H_
 #define LIBSPIRV_OPT_LOCAL_SINGLE_BLOCK_ELIM_PASS_H_
 
-
 #include <algorithm>
 #include <map>
 #include <queue>
-#include <utility>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "basic_block.h"
 #include "def_use_manager.h"
-#include "module.h"
 #include "mem_pass.h"
+#include "module.h"
 
 namespace spvtools {
 namespace opt {
@@ -38,11 +37,18 @@ class LocalSingleBlockLoadStoreElimPass : public MemPass {
  public:
   LocalSingleBlockLoadStoreElimPass();
   const char* name() const override { return "eliminate-local-single-block"; }
-  Status Process(ir::Module*) override;
+  Status Process(ir::IRContext* c) override;
+
+  ir::IRContext::Analysis GetPreservedAnalyses() override {
+    return ir::IRContext::kAnalysisDefUse;
+  }
 
  private:
   // Return true if all uses of |varId| are only through supported reference
-  // operations ie. loads and store. Also cache in supported_ref_ptrs_;
+  // operations ie. loads and store. Also cache in supported_ref_ptrs_.
+  // TODO(dnovillo): This function is replicated in other passes and it's
+  // slightly different in every pass. Is it possible to make one common
+  // implementation?
   bool HasOnlySupportedRefs(uint32_t varId);
 
   // On all entry point functions, within each basic block, eliminate
@@ -53,23 +59,13 @@ class LocalSingleBlockLoadStoreElimPass : public MemPass {
   // where possible. Assumes logical addressing.
   bool LocalSingleBlockLoadStoreElim(ir::Function* func);
 
-  // Save next available id into |module|.
-  inline void FinalizeNextId(ir::Module* module) {
-    module->SetIdBound(next_id_);
-  }
-
-  // Return next available id and calculate next.
-  inline uint32_t TakeNextId() {
-    return next_id_++;
-  }
-
   // Initialize extensions whitelist
   void InitExtensions();
 
   // Return true if all extensions in this module are supported by this pass.
   bool AllExtensionsSupported() const;
 
-  void Initialize(ir::Module* module);
+  void Initialize(ir::IRContext* c);
   Pass::Status ProcessImpl();
 
   // Map from function scope variable to a store of that variable in the
@@ -99,13 +95,9 @@ class LocalSingleBlockLoadStoreElimPass : public MemPass {
   // Variables that are only referenced by supported operations for this
   // pass ie. loads and stores.
   std::unordered_set<uint32_t> supported_ref_ptrs_;
-
-  // Next unused ID
-  uint32_t next_id_;
 };
 
 }  // namespace opt
 }  // namespace spvtools
 
 #endif  // LIBSPIRV_OPT_LOCAL_SINGLE_BLOCK_ELIM_PASS_H_
-

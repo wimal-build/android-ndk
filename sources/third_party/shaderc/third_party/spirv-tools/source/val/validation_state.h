@@ -18,6 +18,7 @@
 #include <deque>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -26,8 +27,8 @@
 #include "decoration.h"
 #include "diagnostic.h"
 #include "enum_set.h"
+#include "latest_version_spirv_header.h"
 #include "spirv-tools/libspirv.h"
-#include "spirv/1.2/spirv.h"
 #include "spirv_definition.h"
 #include "val/function.h"
 #include "val/instruction.h"
@@ -46,6 +47,7 @@ enum ModuleLayoutSection {
   kLayoutExecutionMode,         /// < Section 2.4 #6
   kLayoutDebug1,                /// < Section 2.4 #7 > 1
   kLayoutDebug2,                /// < Section 2.4 #7 > 2
+  kLayoutDebug3,                /// < Section 2.4 #7 > 3
   kLayoutAnnotations,           /// < Section 2.4 #8
   kLayoutTypes,                 /// < Section 2.4 #9
   kLayoutFunctionDeclarations,  /// < Section 2.4 #10
@@ -68,6 +70,9 @@ class ValidationState_t {
     // Allow functionalities enabled by VariablePointersStorageBuffer
     // capability.
     bool variable_pointers_storage_buffer = false;
+
+    // Permit group oerations Reduce, InclusiveScan, ExclusiveScan
+    bool group_ops_reduce_and_scans = false;
   };
 
   ValidationState_t(const spv_const_context context,
@@ -137,6 +142,10 @@ class ValidationState_t {
 
   /// Returns the function states
   Function& current_function();
+  const Function& current_function() const;
+
+  /// Returns function state with the given id, or nullptr if no such function.
+  const Function* function(uint32_t id) const;
 
   /// Returns true if the called after a function instruction but before the
   /// function end instruction
@@ -146,10 +155,12 @@ class ValidationState_t {
   /// instruction
   bool in_block() const;
 
-  /// Registers the given <id> as an Entry Point.
-  void RegisterEntryPointId(const uint32_t id) {
+  /// Registers the given <id> as an Entry Point with |execution_model|.
+  void RegisterEntryPointId(const uint32_t id,
+                            SpvExecutionModel execution_model) {
     entry_points_.push_back(id);
-    entry_point_interfaces_.insert(std::make_pair(id, std::vector<uint32_t>()));
+    entry_point_interfaces_.emplace(id, std::vector<uint32_t>());
+    entry_point_to_execution_models_[id].insert(execution_model);
   }
 
   /// Returns a list of entry point function ids
@@ -161,6 +172,12 @@ class ValidationState_t {
     entry_point_interfaces_[entry_point].push_back(interface);
   }
 
+  /// Registers execution mode for the given entry point.
+  void RegisterExecutionModeForEntryPoint(uint32_t entry_point,
+                                          SpvExecutionMode execution_mode) {
+    entry_point_to_execution_modes_[entry_point].insert(execution_mode);
+  }
+
   /// Returns the interfaces of a given entry point. If the given id is not a
   /// valid Entry Point id, std::out_of_range exception is thrown.
   const std::vector<uint32_t>& entry_point_interfaces(
@@ -168,9 +185,40 @@ class ValidationState_t {
     return entry_point_interfaces_.at(entry_point);
   }
 
+  /// Returns Execution Models for the given Entry Point.
+  /// Returns nullptr if none found (would trigger assertion).
+  const std::set<SpvExecutionModel>* GetExecutionModels(
+      uint32_t entry_point) const {
+    const auto it = entry_point_to_execution_models_.find(entry_point);
+    if (it == entry_point_to_execution_models_.end()) {
+      assert(0);
+      return nullptr;
+    }
+    return &it->second;
+  }
+
+  /// Returns Execution Modes for the given Entry Point.
+  /// Returns nullptr if none found.
+  const std::set<SpvExecutionMode>* GetExecutionModes(
+      uint32_t entry_point) const {
+    const auto it = entry_point_to_execution_modes_.find(entry_point);
+    if (it == entry_point_to_execution_modes_.end()) {
+      return nullptr;
+    }
+    return &it->second;
+  }
+
+  /// Traverses call tree and computes function_to_entry_points_.
+  /// Note: called after fully parsing the binary.
+  void ComputeFunctionToEntryPointMapping();
+
+  /// Returns all the entry points that can call |func|.
+  const std::vector<uint32_t>& FunctionEntryPoints(uint32_t func) const;
+
   /// Inserts an <id> to the set of functions that are target of OpFunctionCall.
   void AddFunctionCallTarget(const uint32_t id) {
     function_call_targets_.insert(id);
+    current_function().AddFunctionCallTarget(id);
   }
 
   /// Returns whether or not a function<id> is the target of OpFunctionCall.
@@ -258,6 +306,16 @@ class ValidationState_t {
   std::vector<Decoration>& id_decorations(uint32_t id) {
     return id_decorations_[id];
   }
+  const std::vector<Decoration>& id_decorations(uint32_t id) const {
+    // TODO: This would throw or generate SIGABRT if id has no
+    // decorations. Remove/refactor this function.
+    return id_decorations_.at(id);
+  }
+
+  // Returns const pointer to the internal decoration container.
+  const std::map<uint32_t, std::vector<Decoration>>& id_decorations() const {
+    return id_decorations_;
+  }
 
   /// Finds id's def, if it exists.  If found, returns the definition otherwise
   /// nullptr
@@ -330,6 +388,81 @@ class ValidationState_t {
   /// Returns false if an identical type declaration already exists.
   bool RegisterUniqueTypeDeclaration(const spv_parsed_instruction_t& inst);
 
+  // Returns type_id of the scalar component of |id|.
+  // |id| can be either
+  // - scalar, vector or matrix type
+  // - object of either scalar, vector or matrix type
+  uint32_t GetComponentType(uint32_t id) const;
+
+  // Returns
+  // - 1 for scalar types or objects
+  // - vector size for vector types or objects
+  // - num columns for matrix types or objects
+  // Should not be called with any other arguments (will return zero and invoke
+  // assertion).
+  uint32_t GetDimension(uint32_t id) const;
+
+  // Returns bit width of scalar or component.
+  // |id| can be
+  // - scalar, vector or matrix type
+  // - object of either scalar, vector or matrix type
+  // Will invoke assertion and return 0 if |id| is none of the above.
+  uint32_t GetBitWidth(uint32_t id) const;
+
+  // Provides detailed information on matrix type.
+  // Returns false iff |id| is not matrix type.
+  bool GetMatrixTypeInfo(uint32_t id, uint32_t* num_rows, uint32_t* num_cols,
+                         uint32_t* column_type, uint32_t* component_type) const;
+
+  // Collects struct member types into |member_types|.
+  // Returns false iff not struct type or has no members.
+  // Deletes prior contents of |member_types|.
+  bool GetStructMemberTypes(uint32_t struct_type_id,
+                            std::vector<uint32_t>* member_types) const;
+
+  // Returns true iff |id| is a type corresponding to the name of the function.
+  // Only works for types not for objects.
+  bool IsFloatScalarType(uint32_t id) const;
+  bool IsFloatVectorType(uint32_t id) const;
+  bool IsFloatScalarOrVectorType(uint32_t id) const;
+  bool IsFloatMatrixType(uint32_t id) const;
+  bool IsIntScalarType(uint32_t id) const;
+  bool IsIntVectorType(uint32_t id) const;
+  bool IsIntScalarOrVectorType(uint32_t id) const;
+  bool IsUnsignedIntScalarType(uint32_t id) const;
+  bool IsUnsignedIntVectorType(uint32_t id) const;
+  bool IsSignedIntScalarType(uint32_t id) const;
+  bool IsSignedIntVectorType(uint32_t id) const;
+  bool IsBoolScalarType(uint32_t id) const;
+  bool IsBoolVectorType(uint32_t id) const;
+  bool IsBoolScalarOrVectorType(uint32_t id) const;
+  bool IsPointerType(uint32_t id) const;
+
+  // Gets value from OpConstant and OpSpecConstant as uint64.
+  // Returns false on failure (no instruction, wrong instruction, not int).
+  bool GetConstantValUint64(uint32_t id, uint64_t* val) const;
+
+  // Returns type_id if id has type or zero otherwise.
+  uint32_t GetTypeId(uint32_t id) const;
+
+  // Returns opcode of the instruction which issued the id or OpNop if the
+  // instruction is not registered.
+  SpvOp GetIdOpcode(uint32_t id) const;
+
+  // Returns type_id for given id operand if it has a type or zero otherwise.
+  // |operand_index| is expected to be pointing towards an operand which is an
+  // id.
+  uint32_t GetOperandTypeId(const spv_parsed_instruction_t* inst,
+                            size_t operand_index) const;
+
+  // Provides information on pointer type. Returns false iff not pointer type.
+  bool GetPointerTypeInfo(uint32_t id, uint32_t* data_type,
+                          uint32_t* storage_class) const;
+
+  // Tries to evaluate a 32-bit signed or unsigned scalar integer constant.
+  // Returns tuple <is_int32, is_const_int32, value>.
+  std::tuple<bool, bool, uint32_t> EvalInt32IfConst(uint32_t id);
+
  private:
   ValidationState_t(const ValidationState_t&);
 
@@ -357,7 +490,9 @@ class ValidationState_t {
   /// The section of the code being processed
   ModuleLayoutSection current_layout_section_;
 
-  /// A list of functions in the module
+  /// A list of functions in the module.
+  /// Pointers to objects in this container are guaranteed to be stable and
+  /// valid until the end of lifetime of the validation state.
   std::deque<Function> module_functions_;
 
   /// Capabilities declared in the module
@@ -367,6 +502,8 @@ class ValidationState_t {
   libspirv::ExtensionSet module_extensions_;
 
   /// List of all instructions in the order they appear in the binary
+  /// Pointers to objects in this container are guaranteed to be stable and
+  /// valid until the end of lifetime of the validation state.
   std::deque<Instruction> ordered_instructions_;
 
   /// Instructions that can be referenced by Ids
@@ -397,7 +534,7 @@ class ValidationState_t {
   std::unordered_map<uint32_t, uint32_t> struct_nesting_depth_;
 
   /// Stores the list of decorations for a given <id>
-  std::unordered_map<uint32_t, std::vector<Decoration>> id_decorations_;
+  std::map<uint32_t, std::vector<Decoration>> id_decorations_;
 
   /// Stores type declarations which need to be unique (i.e. non-aggregates),
   /// in the form [opcode, operand words], result_id is not stored.
@@ -413,11 +550,29 @@ class ValidationState_t {
   /// NOTE: See correspoding getter functions
   bool in_function_;
 
-  // The state of optional features.  These are determined by capabilities
-  // declared by the module.
+  /// The state of optional features.  These are determined by capabilities
+  /// declared by the module.
   Feature features_;
+
+  /// Maps function ids to function stat objects.
+  std::unordered_map<uint32_t, Function*> id_to_function_;
+
+  /// Mapping entry point -> execution models. It is presumed that the same
+  /// function could theoretically be used as 'main' by multiple OpEntryPoint
+  /// instructions.
+  std::unordered_map<uint32_t, std::set<SpvExecutionModel>>
+      entry_point_to_execution_models_;
+
+  /// Mapping entry point -> execution modes.
+  std::unordered_map<uint32_t, std::set<SpvExecutionMode>>
+      entry_point_to_execution_modes_;
+
+  /// Mapping function -> array of entry points inside this
+  /// module which can (indirectly) call the function.
+  std::unordered_map<uint32_t, std::vector<uint32_t>> function_to_entry_points_;
+  const std::vector<uint32_t> empty_ids_;
 };
 
-}  /// namespace libspirv
+}  // namespace libspirv
 
 #endif  /// LIBSPIRV_VAL_VALIDATIONSTATE_H_

@@ -29,7 +29,9 @@
 #include "extensions.h"
 #include "opcode.h"
 #include "operand.h"
+#include "spirv_constant.h"
 #include "spirv_definition.h"
+#include "spirv_target_env.h"
 #include "spirv_validator_options.h"
 #include "util/string_utils.h"
 #include "val/function.h"
@@ -67,6 +69,38 @@ spv_result_t CapabilityError(ValidationState_t& _, int which_operand,
          << " requires one of these capabilities: " << required_capabilities;
 }
 
+// Returns capabilities that enable an opcode.  An empty result is interpreted
+// as no prohibition of use of the opcode.  If the result is non-empty, then
+// the opcode may only be used if at least one of the capabilities is specified
+// by the module.
+CapabilitySet EnablingCapabilitiesForOp(const ValidationState_t& state,
+                                        SpvOp opcode) {
+  // Exceptions for SPV_AMD_shader_ballot
+  switch (opcode) {
+    // Normally these would require Group capability
+    case SpvOpGroupIAddNonUniformAMD:
+    case SpvOpGroupFAddNonUniformAMD:
+    case SpvOpGroupFMinNonUniformAMD:
+    case SpvOpGroupUMinNonUniformAMD:
+    case SpvOpGroupSMinNonUniformAMD:
+    case SpvOpGroupFMaxNonUniformAMD:
+    case SpvOpGroupUMaxNonUniformAMD:
+    case SpvOpGroupSMaxNonUniformAMD:
+      if (state.HasExtension(libspirv::kSPV_AMD_shader_ballot))
+        return CapabilitySet();
+      break;
+    default:
+      break;
+  }
+  // Look it up in the grammar
+  spv_opcode_desc opcode_desc = {};
+  if (SPV_SUCCESS == state.grammar().lookupOpcode(opcode, &opcode_desc)) {
+    return state.grammar().filterCapsAgainstTargetEnv(
+        opcode_desc->capabilities, opcode_desc->numCapabilities);
+  }
+  return CapabilitySet();
+}
+
 // Returns an operand's required capabilities.
 CapabilitySet RequiredCapabilities(const ValidationState_t& state,
                                    spv_operand_type_t type, uint32_t operand) {
@@ -94,15 +128,30 @@ CapabilitySet RequiredCapabilities(const ValidationState_t& state,
   spv_operand_desc operand_desc;
   const auto ret = state.grammar().lookupOperand(type, operand, &operand_desc);
   if (ret == SPV_SUCCESS) {
-    CapabilitySet result = operand_desc->capabilities;
-
-    // Allow FPRoundingMode decoration if requested
-    if (state.features().free_fp_rounding_mode &&
-        type == SPV_OPERAND_TYPE_DECORATION &&
+    // Allow FPRoundingMode decoration if requested.
+    if (type == SPV_OPERAND_TYPE_DECORATION &&
         operand_desc->value == SpvDecorationFPRoundingMode) {
+      if (state.features().free_fp_rounding_mode) return CapabilitySet();
+
+      // Vulkan API requires more capabilities on rounding mode.
+      if (spvIsVulkanEnv(state.context()->target_env)) {
+        CapabilitySet cap_set;
+        cap_set.Add(SpvCapabilityStorageUniformBufferBlock16);
+        cap_set.Add(SpvCapabilityStorageUniform16);
+        cap_set.Add(SpvCapabilityStoragePushConstant16);
+        cap_set.Add(SpvCapabilityStorageInputOutput16);
+        return cap_set;
+      }
+    }
+    // Allow certain group operations if requested.
+    if (state.features().group_ops_reduce_and_scans &&
+        type == SPV_OPERAND_TYPE_GROUP_OPERATION &&
+        (operand <= uint32_t(SpvGroupOperationExclusiveScan))) {
       return CapabilitySet();
     }
-    return result;
+
+    return state.grammar().filterCapsAgainstTargetEnv(
+        operand_desc->capabilities, operand_desc->numCapabilities);
   }
 
   return CapabilitySet();
@@ -115,10 +164,15 @@ ExtensionSet RequiredExtensions(const ValidationState_t& state,
   if (state.grammar().lookupOperand(type, operand, &operand_desc) ==
       SPV_SUCCESS) {
     assert(operand_desc);
-    return operand_desc->extensions;
+    // If this operand is incorporated into core SPIR-V before or in the current
+    // target environment, we don't require extensions anymore.
+    if (spvVersionForTargetEnv(state.grammar().target_env()) >=
+        operand_desc->minVersion)
+      return {};
+    return {operand_desc->numExtensions, operand_desc->extensions};
   }
 
-  return ExtensionSet();
+  return {};
 }
 
 }  // namespace
@@ -127,14 +181,14 @@ namespace libspirv {
 
 spv_result_t CapabilityCheck(ValidationState_t& _,
                              const spv_parsed_instruction_t* inst) {
-  spv_opcode_desc opcode_desc;
   const SpvOp opcode = static_cast<SpvOp>(inst->opcode);
-  if (SPV_SUCCESS == _.grammar().lookupOpcode(opcode, &opcode_desc) &&
-      !_.HasAnyOfCapabilities(opcode_desc->capabilities))
+  CapabilitySet opcode_caps = EnablingCapabilitiesForOp(_, opcode);
+  if (!_.HasAnyOfCapabilities(opcode_caps)) {
     return _.diag(SPV_ERROR_INVALID_CAPABILITY)
            << "Opcode " << spvOpcodeString(opcode)
            << " requires one of these capabilities: "
-           << ToString(opcode_desc->capabilities, _.grammar());
+           << ToString(opcode_caps, _.grammar());
+  }
   for (int i = 0; i < inst->num_operands; ++i) {
     const auto& operand = inst->operands[i];
     const auto word = inst->words[operand.offset];
@@ -164,7 +218,8 @@ spv_result_t CapabilityCheck(ValidationState_t& _,
   return SPV_SUCCESS;
 }
 
-// Checks that all required extensions were declared in the module.
+// Checks that all extensions required by the given instruction's operands were
+// declared in the module.
 spv_result_t ExtensionCheck(ValidationState_t& _,
                             const spv_parsed_instruction_t* inst) {
   const SpvOp opcode = static_cast<SpvOp>(inst->opcode);
@@ -176,29 +231,63 @@ spv_result_t ExtensionCheck(ValidationState_t& _,
         RequiredExtensions(_, operand.type, word);
     if (!_.HasAnyOfExtensions(required_extensions)) {
       return _.diag(SPV_ERROR_MISSING_EXTENSION)
-          << spvutils::CardinalToOrdinal(operand_index + 1) << " operand of "
-          << spvOpcodeString(opcode) << ": operand " << word
-          << " requires one of these extensions: "
-          << ExtensionSetToString(required_extensions);
+             << spvutils::CardinalToOrdinal(operand_index + 1) << " operand of "
+             << spvOpcodeString(opcode) << ": operand " << word
+             << " requires one of these extensions: "
+             << ExtensionSetToString(required_extensions);
     }
   }
   return SPV_SUCCESS;
 }
 
-// Checks that the instruction is not reserved for future use.
-spv_result_t ReservedCheck(ValidationState_t& _,
-                           const spv_parsed_instruction_t* inst) {
-  const SpvOp opcode = static_cast<SpvOp>(inst->opcode);
-  switch (opcode) {
-    case SpvOpImageSparseSampleProjImplicitLod:
-    case SpvOpImageSparseSampleProjExplicitLod:
-    case SpvOpImageSparseSampleProjDrefImplicitLod:
-    case SpvOpImageSparseSampleProjDrefExplicitLod:
-      return _.diag(SPV_ERROR_INVALID_VALUE) << spvOpcodeString(opcode)
-                                             << " is reserved for future use.";
-    default:
-      return SPV_SUCCESS;
+// Checks that the instruction can be used in this target environment.
+spv_result_t VersionCheck(ValidationState_t& _,
+                          const spv_parsed_instruction_t* inst) {
+  const auto opcode = static_cast<SpvOp>(inst->opcode);
+  spv_opcode_desc inst_desc;
+  const bool r = _.grammar().lookupOpcode(opcode, &inst_desc);
+  assert(r == SPV_SUCCESS);
+  (void)r;
+
+  const auto min_version = inst_desc->minVersion;
+
+  ExtensionSet exts(inst_desc->numExtensions, inst_desc->extensions);
+  if (exts.IsEmpty()) {
+    // If no extensions can enable this instruction, then emit error messages
+    // only concerning core SPIR-V versions if errors happen.
+    if (min_version == ~0u) {
+      return _.diag(SPV_ERROR_WRONG_VERSION)
+             << spvOpcodeString(opcode) << " is reserved for future use.";
+    }
+
+    if (spvVersionForTargetEnv(_.grammar().target_env()) < min_version) {
+      return _.diag(SPV_ERROR_WRONG_VERSION)
+             << spvOpcodeString(opcode) << " requires "
+             << spvTargetEnvDescription(
+                    static_cast<spv_target_env>(min_version))
+             << " at minimum.";
+    }
   }
+  // Otherwise, we only error out when no enabling extensions are registered.
+  else if (!_.HasAnyOfExtensions(exts)) {
+    if (min_version == ~0u) {
+      return _.diag(SPV_ERROR_MISSING_EXTENSION)
+             << spvOpcodeString(opcode)
+             << " requires one of the following extensions: "
+             << ExtensionSetToString(exts);
+    }
+
+    if (static_cast<uint32_t>(_.grammar().target_env()) < min_version) {
+      return _.diag(SPV_ERROR_WRONG_VERSION)
+             << spvOpcodeString(opcode) << " requires "
+             << spvTargetEnvDescription(
+                    static_cast<spv_target_env>(min_version))
+             << " at minimum or one of the following extensions: "
+             << ExtensionSetToString(exts);
+    }
+  }
+
+  return SPV_SUCCESS;
 }
 
 // Checks that the Resuld <id> is within the valid bound.
@@ -384,7 +473,7 @@ void CheckIfKnownExtension(ValidationState_t& _,
                            const spv_parsed_instruction_t* inst) {
   const std::string extension_str = GetExtensionString(inst);
   Extension extension;
-  if (!GetExtensionFromString(extension_str, &extension)) {
+  if (!GetExtensionFromString(extension_str.c_str(), &extension)) {
     _.diag(SPV_SUCCESS) << "Found unrecognized extension " << extension_str;
     return;
   }
@@ -393,19 +482,21 @@ void CheckIfKnownExtension(ValidationState_t& _,
 spv_result_t InstructionPass(ValidationState_t& _,
                              const spv_parsed_instruction_t* inst) {
   const SpvOp opcode = static_cast<SpvOp>(inst->opcode);
-  if (opcode == SpvOpExtension)
+  if (opcode == SpvOpExtension) {
     CheckIfKnownExtension(_, inst);
-  if (opcode == SpvOpCapability) {
+  } else if (opcode == SpvOpCapability) {
     _.RegisterCapability(
         static_cast<SpvCapability>(inst->words[inst->operands[0].offset]));
-  }
-  if (opcode == SpvOpMemoryModel) {
+  } else if (opcode == SpvOpMemoryModel) {
     _.set_addressing_model(
         static_cast<SpvAddressingModel>(inst->words[inst->operands[0].offset]));
     _.set_memory_model(
         static_cast<SpvMemoryModel>(inst->words[inst->operands[1].offset]));
-  }
-  if (opcode == SpvOpVariable) {
+  } else if (opcode == SpvOpExecutionMode) {
+    const uint32_t entry_point = inst->words[1];
+    _.RegisterExecutionModeForEntryPoint(entry_point,
+                                         SpvExecutionMode(inst->words[2]));
+  } else if (opcode == SpvOpVariable) {
     const auto storage_class =
         static_cast<SpvStorageClass>(inst->words[inst->operands[2].offset]);
     if (auto error = LimitCheckNumVars(_, inst->result_id, storage_class)) {
@@ -453,7 +544,7 @@ spv_result_t InstructionPass(ValidationState_t& _,
   if (auto error = LimitCheckIdBound(_, inst)) return error;
   if (auto error = LimitCheckStruct(_, inst)) return error;
   if (auto error = LimitCheckSwitch(_, inst)) return error;
-  if (auto error = ReservedCheck(_, inst)) return error;
+  if (auto error = VersionCheck(_, inst)) return error;
 
   // All instruction checks have passed.
   return SPV_SUCCESS;

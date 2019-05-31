@@ -48,11 +48,12 @@ def _char_pt_to_str(char_pt):
 
 class SampleStruct(ct.Structure):
     """ Instance of a sample in perf.data.
-        ip: the address of the instruction the cpu is running when the sample happens.
+        ip: the program counter of the thread generating the sample.
         pid: process id (or thread group id) of the thread generating the sample.
         tid: thread id.
         thread_comm: thread name.
-        time: timestamp of a sample, the meaning is decided by simpleperf record --clockid option.
+        time: time at which the sample was generated. The value is in nanoseconds.
+              The clock is decided by the --clockid option in `simpleperf record`.
         in_kernel: whether the instruction is in kernel space or user space.
         cpu: the cpu generating the sample.
         period: count of events have happened since last sample. For example, if we use
@@ -194,6 +195,7 @@ class ReportLib(object):
         self._SetRecordFileFunc = self._lib.SetRecordFile
         self._SetKallsymsFileFunc = self._lib.SetKallsymsFile
         self._ShowIpForUnknownSymbolFunc = self._lib.ShowIpForUnknownSymbol
+        self._ShowArtFramesFunc = self._lib.ShowArtFrames
         self._GetNextSampleFunc = self._lib.GetNextSample
         self._GetNextSampleFunc.restype = ct.POINTER(SampleStruct)
         self._GetEventOfCurrentSampleFunc = self._lib.GetEventOfCurrentSample
@@ -243,6 +245,10 @@ class ReportLib(object):
 
     def ShowIpForUnknownSymbol(self):
         self._ShowIpForUnknownSymbolFunc(self.getInstance())
+
+    def ShowArtFrames(self, show=True):
+        """ Show frames of internal methods of the Java interpreter. """
+        self._ShowArtFramesFunc(self.getInstance(), show)
 
     def SetKallsymsFile(self, kallsym_file):
         """ Set the file path to a copy of the /proc/kallsyms file (for off device decoding) """

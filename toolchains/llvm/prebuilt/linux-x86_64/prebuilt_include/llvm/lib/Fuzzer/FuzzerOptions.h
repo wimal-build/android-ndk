@@ -32,6 +32,7 @@ struct FuzzingOptions {
   bool UseCmp = false;
   bool UseValueProfile = false;
   bool Shrink = false;
+  bool ReduceInputs = false;
   int ReloadIntervalSec = 1;
   bool ShuffleAtStartUp = true;
   bool PreferSmall = true;
@@ -45,13 +46,15 @@ struct FuzzingOptions {
   std::string ExitOnItem;
   bool SaveArtifacts = true;
   bool PrintNEW = true; // Print a status line when new units are found;
-  bool OutputCSV = false;
   bool PrintNewCovPcs = false;
+  int PrintNewCovFuncs = 0;
   bool PrintFinalStats = false;
   bool PrintCorpusStats = false;
   bool PrintCoverage = false;
   bool DumpCoverage = false;
+  bool UseClangCoverage = false;
   bool DetectLeaks = true;
+  int UseFeatureFrequency = false;
   int  TraceMalloc = 0;
   bool HandleAbrt = false;
   bool HandleBus = false;

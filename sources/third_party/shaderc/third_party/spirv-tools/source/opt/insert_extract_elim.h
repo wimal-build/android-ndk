@@ -17,7 +17,6 @@
 #ifndef LIBSPIRV_OPT_INSERT_EXTRACT_ELIM_PASS_H_
 #define LIBSPIRV_OPT_INSERT_EXTRACT_ELIM_PASS_H_
 
-
 #include <algorithm>
 #include <map>
 #include <unordered_map>
@@ -26,59 +25,37 @@
 
 #include "basic_block.h"
 #include "def_use_manager.h"
+#include "ir_context.h"
+#include "mem_pass.h"
 #include "module.h"
-#include "pass.h"
 
 namespace spvtools {
 namespace opt {
 
 // See optimizer.hpp for documentation.
-class InsertExtractElimPass : public Pass {
+class InsertExtractElimPass : public MemPass {
  public:
   InsertExtractElimPass();
-  const char* name() const override { return "insert_extract_elim"; }
-  Status Process(ir::Module*) override;
+  const char* name() const override { return "eliminate-insert-extract"; }
+  Status Process(ir::IRContext*) override;
 
  private:
-  // Return true if indices of extract |extInst| and insert |insInst| match
-  bool ExtInsMatch(
-    const ir::Instruction* extInst, const ir::Instruction* insInst) const;
+  // Return id of component of |cinst| specified by |extIndices| starting with
+  // index at |extOffset|. Return 0 if indices cannot be matched exactly.
+  uint32_t DoExtract(ir::Instruction* cinst, std::vector<uint32_t>* extIndices,
+                     uint32_t extOffset);
 
-  // Return true if indices of extract |extInst| and insert |insInst| conflict,
-  // specifically, if the insert changes bits specified by the extract, but
-  // changes either more bits or less bits than the extract specifies,
-  // meaning the exact value being inserted cannot be used to replace
-  // the extract.
-  bool ExtInsConflict(
-    const ir::Instruction* extInst, const ir::Instruction* insInst) const;
-
-  // Look for OpExtract on sequence of OpInserts in |func|. If there is an
-  // insert with identical indices, replace the extract with the value
-  // that is inserted if possible. Specifically, replace if there is no
-  // intervening insert which conflicts.
+  // Look for OpExtract on sequence of OpInserts in |func|. If there is a
+  // reaching insert which corresponds to the indices of the extract, replace
+  // the extract with the value that is inserted. Also resolve extracts from
+  // CompositeConstruct or ConstantComposite.
   bool EliminateInsertExtract(ir::Function* func);
 
-  // Initialize extensions whitelist
-  void InitExtensions();
-
-  // Return true if all extensions in this module are allowed by this pass.
-  bool AllExtensionsSupported() const;
-
-  void Initialize(ir::Module* module);
+  void Initialize(ir::IRContext* c);
   Pass::Status ProcessImpl();
-
-  // Module this pass is processing
-  ir::Module* module_;
-
-  // Def-Uses for the module we are processing
-  std::unique_ptr<analysis::DefUseManager> def_use_mgr_;
-
-  // Extensions supported by this pass.
-  std::unordered_set<std::string> extensions_whitelist_;
 };
 
 }  // namespace opt
 }  // namespace spvtools
 
 #endif  // LIBSPIRV_OPT_INSERT_EXTRACT_ELIM_PASS_H_
-

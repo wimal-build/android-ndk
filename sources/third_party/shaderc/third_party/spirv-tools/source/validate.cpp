@@ -35,6 +35,7 @@
 #include "spirv-tools/libspirv.h"
 #include "spirv_constant.h"
 #include "spirv_endian.h"
+#include "spirv_target_env.h"
 #include "spirv_validator_options.h"
 #include "val/construct.h"
 #include "val/function.h"
@@ -42,31 +43,27 @@
 
 using std::function;
 using std::ostream_iterator;
-using std::placeholders::_1;
 using std::string;
 using std::stringstream;
 using std::transform;
 using std::vector;
+using std::placeholders::_1;
 
 using libspirv::CfgPass;
-using libspirv::Extension;
-using libspirv::InstructionPass;
-using libspirv::ModuleLayoutPass;
 using libspirv::DataRulesPass;
+using libspirv::Extension;
 using libspirv::IdPass;
+using libspirv::InstructionPass;
+using libspirv::LiteralsPass;
+using libspirv::ModuleLayoutPass;
 using libspirv::ValidationState_t;
 
 spv_result_t spvValidateIDs(const spv_instruction_t* pInsts,
                             const uint64_t count,
-                            const spv_opcode_table opcodeTable,
-                            const spv_operand_table operandTable,
-                            const spv_ext_inst_table extInstTable,
                             const ValidationState_t& state,
                             spv_position position) {
   position->index = SPV_INDEX_INSTRUCTION;
-  if (auto error =
-          spvValidateInstructionIDs(pInsts, count, opcodeTable, operandTable,
-                                    extInstTable, state, position))
+  if (auto error = spvValidateInstructionIDs(pInsts, count, state, position))
     return error;
   return SPV_SUCCESS;
 }
@@ -126,7 +123,7 @@ void RegisterExtension(ValidationState_t& _,
                        const spv_parsed_instruction_t* inst) {
   const std::string extension_str = libspirv::GetExtensionString(inst);
   Extension extension;
-  if (!GetExtensionFromString(extension_str, &extension)) {
+  if (!GetExtensionFromString(extension_str.c_str(), &extension)) {
     // The error will be logged in the ProcessInstruction pass.
     return;
   }
@@ -139,11 +136,10 @@ void RegisterExtension(ValidationState_t& _,
 // once an instruction which is not SpvOpCapability and SpvOpExtension is
 // encountered. According to the SPIR-V spec extensions are declared after
 // capabilities and before everything else.
-spv_result_t ProcessExtensions(
-    void* user_data, const spv_parsed_instruction_t* inst) {
+spv_result_t ProcessExtensions(void* user_data,
+                               const spv_parsed_instruction_t* inst) {
   const SpvOp opcode = static_cast<SpvOp>(inst->opcode);
-  if (opcode == SpvOpCapability)
-    return SPV_SUCCESS;
+  if (opcode == SpvOpCapability) return SPV_SUCCESS;
 
   if (opcode == SpvOpExtension) {
     ValidationState_t& _ = *(reinterpret_cast<ValidationState_t*>(user_data));
@@ -161,7 +157,8 @@ spv_result_t ProcessInstruction(void* user_data,
   _.increment_instruction_count();
   if (static_cast<SpvOp>(inst->opcode) == SpvOpEntryPoint) {
     const auto entry_point = inst->words[2];
-    _.RegisterEntryPointId(entry_point);
+    const SpvExecutionModel execution_model = SpvExecutionModel(inst->words[1]);
+    _.RegisterEntryPointId(entry_point, execution_model);
     // Operand 3 and later are the <id> of interfaces for the entry point.
     for (int i = 3; i < inst->num_operands; ++i) {
       _.RegisterInterfaceForEntryPoint(entry_point,
@@ -180,6 +177,19 @@ spv_result_t ProcessInstruction(void* user_data,
   if (auto error = CfgPass(_, inst)) return error;
   if (auto error = InstructionPass(_, inst)) return error;
   if (auto error = TypeUniquePass(_, inst)) return error;
+  if (auto error = ArithmeticsPass(_, inst)) return error;
+  if (auto error = CompositesPass(_, inst)) return error;
+  if (auto error = ConversionPass(_, inst)) return error;
+  if (auto error = DerivativesPass(_, inst)) return error;
+  if (auto error = LogicalsPass(_, inst)) return error;
+  if (auto error = BitwisePass(_, inst)) return error;
+  if (auto error = ExtInstPass(_, inst)) return error;
+  if (auto error = ImagePass(_, inst)) return error;
+  if (auto error = AtomicsPass(_, inst)) return error;
+  if (auto error = BarriersPass(_, inst)) return error;
+  if (auto error = PrimitivesPass(_, inst)) return error;
+  if (auto error = LiteralsPass(_, inst)) return error;
+  if (auto error = NonUniformPass(_, inst)) return error;
 
   return SPV_SUCCESS;
 }
@@ -225,20 +235,12 @@ UNUSED(void PrintDotGraph(ValidationState_t& _, libspirv::Function func)) {
     printf("}\n");
   }
 }
-}  // anonymous namespace
-
-spv_result_t spvValidate(const spv_const_context context,
-                         const spv_const_binary binary,
-                         spv_diagnostic* pDiagnostic) {
-  return spvValidateBinary(context, binary->code, binary->wordCount,
-                           pDiagnostic);
-}
 
 spv_result_t ValidateBinaryUsingContextAndValidationState(
     const spv_context_t& context, const uint32_t* words, const size_t num_words,
     spv_diagnostic* pDiagnostic, ValidationState_t* vstate) {
   auto binary = std::unique_ptr<spv_const_binary_t>(
-    new spv_const_binary_t{words, num_words});
+      new spv_const_binary_t{words, num_words});
 
   spv_endianness_t endian;
   spv_position_t position = {};
@@ -255,6 +257,16 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
            << "Invalid SPIR-V header.";
   }
 
+  if (header.version > spvVersionForTargetEnv(context.target_env)) {
+    return libspirv::DiagnosticStream(position, context.consumer,
+                                      SPV_ERROR_WRONG_VERSION)
+           << "Invalid SPIR-V binary version "
+           << SPV_SPIRV_VERSION_MAJOR_PART(header.version) << "."
+           << SPV_SPIRV_VERSION_MINOR_PART(header.version)
+           << " for target environment "
+           << spvTargetEnvDescription(context.target_env) << ".";
+  }
+
   // Look for OpExtension instructions and register extensions.
   // Diagnostics if any will be produced in the next pass (ProcessInstruction).
   spvBinaryParse(&context, vstate, words, num_words,
@@ -263,8 +275,8 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
 
   // NOTE: Parse the module and perform inline validation checks. These
   // checks do not require the the knowledge of the whole module.
-  if (auto error = spvBinaryParse(&context, vstate, words, num_words,
-                                  setHeader, ProcessInstruction, pDiagnostic))
+  if (auto error = spvBinaryParse(&context, vstate, words, num_words, setHeader,
+                                  ProcessInstruction, pDiagnostic))
     return error;
 
   if (vstate->in_function_body())
@@ -287,12 +299,18 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
            << id_str.substr(0, id_str.size() - 1);
   }
 
+  vstate->ComputeFunctionToEntryPointMapping();
+
+  // Validate the preconditions involving adjacent instructions. e.g. SpvOpPhi
+  // must only be preceeded by SpvOpLabel, SpvOpPhi, or SpvOpLine.
+  if (auto error = ValidateAdjacency(*vstate)) return error;
+
   // CFG checks are performed after the binary has been parsed
   // and the CFGPass has collected information about the control flow
   if (auto error = PerformCfgChecks(*vstate)) return error;
   if (auto error = UpdateIdUse(*vstate)) return error;
   if (auto error = CheckIdDefinitionDominateUse(*vstate)) return error;
-  if (auto error = ValidateDecorations(*vstate))  return error;
+  if (auto error = ValidateDecorations(*vstate)) return error;
 
   // Entry point validation. Based on 2.16.1 (Universal Validation Rules) of the
   // SPIRV spec:
@@ -333,10 +351,21 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
   }
 
   position.index = SPV_INDEX_INSTRUCTION;
-  return spvValidateIDs(instructions.data(), instructions.size(),
-                        context.opcode_table,
-                        context.operand_table,
-                        context.ext_inst_table, *vstate, &position);
+  if (auto error = spvValidateIDs(instructions.data(), instructions.size(),
+                                  *vstate, &position))
+    return error;
+
+  if (auto error = ValidateBuiltIns(*vstate)) return error;
+
+  return SPV_SUCCESS;
+}
+}  // anonymous namespace
+
+spv_result_t spvValidate(const spv_const_context context,
+                         const spv_const_binary binary,
+                         spv_diagnostic* pDiagnostic) {
+  return spvValidateBinary(context, binary->code, binary->wordCount,
+                           pDiagnostic);
 }
 
 spv_result_t spvValidateBinary(const spv_const_context context,

@@ -65,6 +65,12 @@ ifndef NDK_TOOLCHAIN
         VERSION := $(NDK_TOOLCHAIN_VERSION)
         TARGET_TOOLCHAIN := $(TARGET_TOOLCHAIN_BASE)-$(VERSION)
         $(call ndk_log,Using target toolchain '$(TARGET_TOOLCHAIN)' for '$(TARGET_ARCH_ABI)' ABI (through NDK_TOOLCHAIN_VERSION))
+        ifeq ($(NDK_TOOLCHAIN_VERSION),4.9)
+            $(call __ndk_info,WARNING: Deprecated NDK_TOOLCHAIN_VERSION value: \
+                $(NDK_TOOLCHAIN_VERSION). GCC is no longer supported and will \
+                be removed in the next release. See \
+                https://android.googlesource.com/platform/ndk/+/master/docs/ClangMigration.md.)
+        endif
     else
         $(call ndk_log,Using target toolchain '$(TARGET_TOOLCHAIN)' for '$(TARGET_ARCH_ABI)' ABI)
     endif
@@ -153,49 +159,7 @@ SYSROOT_ARCH_INC_ARG := \
 
 clean-installed-binaries::
 
-# Ensure that for debuggable applications, gdbserver will be copied to
-# the proper location
-
-NDK_APP_GDBSERVER := $(NDK_APP_DST_DIR)/gdbserver
-NDK_APP_GDBSETUP := $(NDK_APP_DST_DIR)/gdb.setup
-
-ifeq ($(NDK_APP_DEBUGGABLE),true)
-ifeq ($(TARGET_SONAME_EXTENSION),.so)
-
-installed_modules: $(NDK_APP_GDBSERVER)
-
-$(NDK_APP_GDBSERVER): PRIVATE_ABI     := $(TARGET_ARCH_ABI)
-$(NDK_APP_GDBSERVER): PRIVATE_NAME    := $(TOOLCHAIN_NAME)
-$(NDK_APP_GDBSERVER): PRIVATE_SRC     := $(TARGET_GDBSERVER)
-$(NDK_APP_GDBSERVER): PRIVATE_DST     := $(NDK_APP_GDBSERVER)
-
-$(call generate-file-dir,$(NDK_APP_GDBSERVER))
-
-$(NDK_APP_GDBSERVER): clean-installed-binaries
-	$(call host-echo-build-step,$(PRIVATE_ABI),Gdbserver) "[$(PRIVATE_NAME)] $(call pretty-dir,$(PRIVATE_DST))"
-	$(hide) $(call host-install,$(PRIVATE_SRC),$(PRIVATE_DST))
-endif
-
-# Install gdb.setup for both .so and .bc projects
-ifneq (,$(filter $(TARGET_SONAME_EXTENSION),.so .bc))
-installed_modules: $(NDK_APP_GDBSETUP)
-
-$(NDK_APP_GDBSETUP): PRIVATE_ABI := $(TARGET_ARCH_ABI)
-$(NDK_APP_GDBSETUP): PRIVATE_DST := $(NDK_APP_GDBSETUP)
-$(NDK_APP_GDBSETUP): PRIVATE_SOLIB_PATH := $(TARGET_OUT)
-$(NDK_APP_GDBSETUP): PRIVATE_SRC_DIRS := $(SYSROOT_INC)
-
-$(NDK_APP_GDBSETUP):
-	$(call host-echo-build-step,$(PRIVATE_ABI),Gdbsetup) "$(call pretty-dir,$(PRIVATE_DST))"
-	$(hide) $(HOST_ECHO) "set solib-search-path $(call host-path,$(PRIVATE_SOLIB_PATH))" > $(PRIVATE_DST)
-	$(hide) $(HOST_ECHO) "directory $(call host-path,$(call remove-duplicates,$(PRIVATE_SRC_DIRS)))" >> $(PRIVATE_DST)
-
-$(call generate-file-dir,$(NDK_APP_GDBSETUP))
-
-# This prevents parallel execution to clear gdb.setup after it has been written to
-$(NDK_APP_GDBSETUP): clean-installed-binaries
-endif
-endif
+include $(BUILD_SYSTEM)/gdb.mk
 
 # free the dictionary of LOCAL_MODULE definitions
 $(call modules-clear)
@@ -205,6 +169,20 @@ $(call ndk-stl-select,$(NDK_APP_STL))
 # now parse the Android.mk for the application, this records all
 # module declarations, but does not populate the dependency graph yet.
 include $(NDK_APP_BUILD_SCRIPT)
+
+# Avoid computing sanitizer/wrap.sh things in the DUMP_VAR case because both of
+# these will create build rules and we want to avoid that. The DUMP_VAR case
+# also doesn't parse the module definitions, so we're missing a lot of the
+# information we need.
+ifeq (,$(DUMP_VAR))
+    # Comes after NDK_APP_BUILD_SCRIPT because we need to know if *any* module
+    # has -fsanitize in its ldflags.
+    include $(BUILD_SYSTEM)/sanitizers.mk
+
+    ifneq ($(NDK_APP_WRAP_SH_$(TARGET_ARCH_ABI)),)
+        include $(BUILD_SYSTEM)/install_wrap_sh.mk
+    endif
+endif
 
 $(call ndk-stl-add-dependencies,$(NDK_APP_STL))
 
