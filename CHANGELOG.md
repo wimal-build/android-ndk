@@ -11,102 +11,151 @@ For Android Studio issues, follow the docs on the [Android Studio site].
 Announcements
 -------------
 
- * GCC has been removed.
+ * Developers should begin testing their apps with [LLD](https://lld.llvm.org/).
+   AOSP has switched to using LLD by default and the NDK will use it by default
+   in the next release. BFD and Gold will be removed once LLD has been through a
+   release cycle with no major unresolved issues (estimated r21). Test LLD in
+   your app by passing `-fuse-ld=lld` when linking.
 
- * [LLD](https://lld.llvm.org/) is now available for testing. AOSP is in the
-   process of switching to using LLD by default and the NDK will follow
-   (timeline unknown). Test LLD in your app by passing `-fuse-ld=lld` when
-   linking.
-
- * gnustl, gabi++, and stlport have been removed.
-
- * Support for ICS (android-14 and android-15) has been removed. Apps using
-   executables no longer need to provide both a PIE and non-PIE executable.
+   Note: lld does not currently support compressed symbols on Windows. See
+   [Issue 888]. Clang also cannot generate compressed symbols on Windows, but
+   this can be a problem when using artifacts built from Darwin or Linux.
 
  * The Play Store will require 64-bit support when uploading an APK beginning in
    August 2019. Start porting now to avoid surprises when the time comes. For
    more information, see [this blog post](https://android-developers.googleblog.com/2017/12/improving-app-security-and-performance.html).
 
-r18b
+ * [Issue 780]: [Standalone toolchains] are now unnecessary. Clang, binutils,
+   the sysroot, and other toolchain pieces are now all installed to
+   `$NDK/toolchains/llvm/prebuilt/<host-tag>` and Clang will automatically find
+   them. Instead of creating a standalone toolchain for API 26 ARM, instead
+   invoke the compiler directly from the NDK:
+
+       $ $NDK/toolchains/llvm/prebuilt/<host-tag>/bin/armv7a-linux-androideabi26-clang++ src.cpp
+
+   For r19 the toolchain is also installed to the old path to give build systems
+   a chance to adapt to the new layout. The old paths will be removed in r20.
+
+   The `make_standalone_toolchain.py` script will not be removed. It is now
+   unnecessary and will emit a warning with the above information, but the
+   script will remain to preserve existing workflows.
+
+   If you're using ndk-build, CMake, or a standalone toolchain, there should be
+   no change to your workflow. This change is meaningful for maintainers of
+   third-party build systems, who should now be able to delete some
+   Android-specific code. For more information, see the [Build System
+   Maintainers] guide.
+
+ * ndk-depends has been removed. We believe that [ReLinker] is a better
+   solution to native library loading issues on old Android versions.
+
+ * [Issue 862]: The GCC wrapper scripts which redirected to Clang have been
+   removed, as they are not functional enough to be drop in replacements.
+
+[Build System Maintainers]: https://android.googlesource.com/platform/ndk/+/master/docs/BuildSystemMaintainers.md
+[Issue 780]: https://github.com/android-ndk/ndk/issues/780
+[Issue 862]: https://github.com/android-ndk/ndk/issues/862
+[ReLinker]: https://github.com/KeepSafe/ReLinker
+[Standalone toolchains]: https://developer.android.com/ndk/guides/standalone_toolchain
+
+r19c
 ----
 
- * [Issue 799]: Fixed build performance regression in ndk-build caused by
-   compile_commands.json logic.
- * [Issue 803]: The "GCC" scripts in standalone toolchains now point to the
-   correct Clang.
- * [Issue 805]: The "GCC" wrappers for Clang now use `-gcc-toolchain`.
- * [Issue 815]: ndk-build now builds with `-fstack-protector-strong` again.
+ * [Issue 912]: Prevent the CMake toolchain file from clobbering a user
+   specified `CMAKE_FIND_ROOT_PATH`.
+ * [Issue 920]: Fix clang wrapper scripts on Windows.
 
-[Issue 799]: https://github.com/android-ndk/ndk/issues/799
-[Issue 803]: https://github.com/android-ndk/ndk/issues/803
-[Issue 805]: https://github.com/android-ndk/ndk/issues/805
-[Issue 815]: https://github.com/android-ndk/ndk/issues/805
+[Issue 912]: https://github.com/android-ndk/ndk/issues/912
+[Issue 920]: https://github.com/android-ndk/ndk/issues/920
+
+r19b
+----
+
+ * [Issue 855]: ndk-build automatically disables multithreaded linking for LLD
+   on Windows, where it may hang. It is not possible for the NDK to detect this
+   situation for CMake, so CMake users and custom build systems must pass
+   `-Wl,--no-threads` when linking with LLD on Windows.
+ * [Issue 849]: Fixed unused command line argument warning when using standalone
+   toolchains to compile C code.
+ * [Issue 890]: Fixed `CMAKE_FIND_ROOT_PATH`. CMake projects will no longer
+   search the host's sysroot for headers and libraries.
+ * [Issue 906]: Explicitly set `-march=armv7-a` for 32-bit ARM to workaround
+   Clang not setting that flag automatically when using `-fno-integrated-as`.
+   This fix only affects ndk-build and CMake. Standalone toolchains and custom
+   build systems will need to apply this fix themselves.
+ * [Issue 907]: Fixed `find_path` for NDK headers in CMake.
+
+[Issue 849]: https://github.com/android-ndk/ndk/issues/849
+[Issue 890]: https://github.com/android-ndk/ndk/issues/890
+[Issue 907]: https://github.com/android-ndk/ndk/issues/907
 
 Changes
 -------
 
- * Updated Clang to build 4751641, based on r328903.
-     * With [Issue 573] fixed, -Oz is now the default optimization mode for
-       thumb.
- * Updated libc++ to revision r334917.
- * Added support for clang-tidy to ndk-build.
-     * Enable application-wide with `APP_CLANG_TIDY := true`, or per-module with
-       `LOCAL_CLANG_TIDY := true`.
-     * Pass specific clang-tidy flags such as `-checks` with
-       `APP_CLANG_TIDY_FLAGS` or `LOCAL_CLANG_TIDY_FLAGS`.
-     * As usual, module settings override application settings.
-     * By default no flags are passed to clang-tidy, so only the checks enabled
-       by default in clang-tidy will be enabled. View the default list with
-       `clang-tidy -list-checks`.
-     * By default clang-tidy warnings are not errors. This behavior can be
-       changed with `-warnings-as-errors=*`.
- * ndk-build can now generate a [JSON Compilation Database].
-     * Generate with either `ndk-build compile_commands.json` (does not build)
-       or `ndk-build GEN_COMPILE_COMMANDS_DB=true` (builds and generates
-       database).
- * [Issue 490]: ndk-build and CMake now default to using NEON for ARM when
-   targeting android-23 (Marshmallow) or newer.
-     * If your minSdkVersion is below 23 or if you were already enabling NEON
-       manually, this change does not affect you.
-     * CPUs that do not support this feature are uncommon and new devices were
-       not allowed to ship without it beginning in Marshmallow, but older
-       devices that did not support NEON may have been upgraded to Marshmallow.
-     * If you need to continue supporting these devices and have a minSdkVersion
-       of 23 or higher, you can disable NEON explicitly by setting
-       `LOCAL_ARM_NEON := false` in ndk-build or passing
-       `-DANDROID_ARM_NEON=false` to CMake.
-     * Alternatively, use the Play Console to [blacklist CPUs] without NEON to
-       disallow your app from being installed on those devices.
- * Added `APP_STRIP_MODE` and `LOCAL_STRIP_MODE` to ndk-build.
-     * Allows the user to specify the strip mode used for their modules.
-     * The option is passed directly to the strip command. See the [strip
-       documentation](https://sourceware.org/binutils/docs/binutils/strip.html)
-       for details.
-     * If set to "none", strip will not be run.
-     * Defaults to "--strip-unneeded". This is the same behavior as previous
-       NDKs.
-     * `LOCAL_STRIP_MODE` always overrides `APP_STRIP_MODE` when set.
- * [Issue 749]: The libc++_shared.so in the NDK is no longer stripped of debug
-   info. Debugging libc++ is now possible. Gradle will still strip the library
-   before packaging it in an APK.
+ * Updated Clang to r339409.
+     * C++ compilation now defaults to C++14.
+ * [Issue 780]: A complete NDK toolchain is now installed to the Clang
+   directory. See the announcements section for more information.
+ * ndk-build no longer removes artifacts from `NDK_LIBS_OUT` for ABIs not
+   present in `APP_ABI`. This enables workflows like the following:
 
-[Issue 490]: https://github.com/android-ndk/ndk/issues/490
-[Issue 573]: https://github.com/android-ndk/ndk/issues/573
-[Issue 749]: https://github.com/android-ndk/ndk/issues/749
-[blacklist CPUs]: https://support.google.com/googleplay/android-developer/answer/7353455?hl=en
-[clang-tidy]: http://clang.llvm.org/extra/clang-tidy/
-[JSON Compilation Database]: https://clang.llvm.org/docs/JSONCompilationDatabase.html
+   ```bash
+   for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+       ndk-build APP_ABI=$abi
+   done
+   ```
+
+   Prior to this change, the above workflow would remove the previously built
+   ABI's artifacts on each successive build, resulting in only x86_64 being
+   present at the end of the loop.
+ * ndk-stack has been rewritten in Python.
+ * [Issue 776]: To better support LLD, ndk-build and CMake no longer pass
+   `-Wl,--fix-cortex-a8` by default.
+     * CPUs that require this fix are uncommon in the NDK's supported API range
+       (16+).
+     * If you need to continue supporting these devices, add
+       `-Wl,--fix-cortex-a8` to your `APP_LDFLAGS` or `CMAKE_C_FLAGS`, but note
+       that LLD will not be adding support for this workaround.
+     * Alternatively, use the Play Console to [blacklist] Cortex-A8 CPUs to
+       disallow your app from being installed on those devices.
+ * [Issue 798]: The ndk-build and CMake options to disable RelRO and noexecstack
+   are now ignored. All code is built with RelRO and non-executable stacks.
+ * [Issue 294]: All code is now built with a subset of [compiler-rt] to provide
+   a complete set of compiler built-ins for Clang.
+
+[Issue 294]: https://github.com/android-ndk/ndk/issues/294
+[Issue 776]: https://github.com/android-ndk/ndk/issues/776
+[Issue 798]: https://github.com/android-ndk/ndk/issues/798
+[blacklist]: https://support.google.com/googleplay/android-developer/answer/7353455?hl=en
+[compiler-rt]: https://compiler-rt.llvm.org/
 
 Known Issues
 ------------
 
  * This is not intended to be a comprehensive list of all outstanding bugs.
+ * [Issue 888]: lld does not support compressed symbols on Windows. Clang also
+   cannot generate compressed symbols on Windows, but this can be a problem when
+   using artifacts built from Darwin or Linux.
  * [Issue 360]: `thread_local` variables with non-trivial destructors will cause
    segfaults if the containing library is `dlclose`ed on devices running M or
    newer, or devices before M when using a static STL. The simple workaround is
    to not call `dlclose`.
  * [Issue 70838247]: Gold emits broken debug information for AArch64. AArch64
    still uses BFD by default.
+ * [Issue 855]: LLD may hang on Windows when using multithreaded linking.
+   ndk-build will automatically disable multithreaded linking in this situation,
+   but CMake users and custom build systems should pass `-Wl,--no-threads` when
+   using LLD on Windows. The other linkers and operating systems are unaffected.
+ * [Issue 884]: Third-party build systems must pass `-fno-addrsig` to Clang for
+   compatibility with binutils. ndk-build, CMake, and standalone toolchains
+   handle this automatically.
+ * [Issue 906]: Clang does not pass `-march=armv7-a` to the assembler when using
+   `-fno-integrated-as`. This results in the assembler generating ARMv5
+   instructions. Note that by default Clang uses the integrated assembler which
+   does not have this problem. To workaround this issue, explicitly use
+   `-march=armv7-a` when building for 32-bit ARM with the non-integrated
+   assembler, or use the integrated assembler. ndk-build and CMake already
+   contain these workarounds.
  * This version of the NDK is incompatible with the Android Gradle plugin
    version 3.0 or older. If you see an error like
    `No toolchains found in the NDK toolchains folder for ABI with prefix: mips64el-linux-android`,
@@ -115,4 +164,8 @@ Known Issues
 
 [Issue 360]: https://github.com/android-ndk/ndk/issues/360
 [Issue 70838247]: https://issuetracker.google.com/70838247
+[Issue 855]: https://github.com/android-ndk/ndk/issues/855
+[Issue 884]: https://github.com/android-ndk/ndk/issues/884
+[Issue 888]: https://github.com/android-ndk/ndk/issues/888
+[Issue 906]: https://github.com/android-ndk/ndk/issues/906
 [use plugin version 3.1 or newer]: https://developer.android.com/studio/releases/gradle-plugin#updating-plugin

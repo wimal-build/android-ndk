@@ -260,8 +260,6 @@ modules-LOCALS := \
     C_INCLUDES \
     DISABLE_FATAL_LINKER_WARNINGS \
     DISABLE_FORMAT_STRING_CHECKS \
-    DISABLE_NO_EXECUTE \
-    DISABLE_RELRO \
     EXPORT_ASMFLAGS \
     EXPORT_CFLAGS \
     EXPORT_CONLYFLAGS \
@@ -1335,6 +1333,10 @@ local-source-file-path = $(if $(call host-path-is-absolute,$1),$1,$(LOCAL_PATH)/
 # _FLAGS: 'compiler' flags
 # _TEXT: Display text (e.g. "Compile++ thumb", must be EXACTLY 15 chars long)
 #
+# The output object is removed before the compile step as a fix for
+# https://github.com/android-ndk/ndk/issues/603. tl;dr: Object files may not
+# necessarily be removed when compilation fails. .DELETE_ON_ERROR may not help
+# here because that only removes the output if the output changes.
 define ev-build-file
 $$(_OBJ): PRIVATE_ABI      := $$(TARGET_ARCH_ABI)
 $$(_OBJ): PRIVATE_SRC      := $$(_SRC)
@@ -1355,6 +1357,7 @@ endif
 $$(call generate-file-dir,$$(_OBJ))
 $$(_OBJ): $$(_SRC) $$(LOCAL_MAKEFILE) $$(NDK_APP_APPLICATION_MK) $(LOCAL_RS_OBJECTS)
 	$$(call host-echo-build-step,$$(PRIVATE_ABI),$$(PRIVATE_TEXT)) "$$(PRIVATE_MODULE) <= $$(notdir $$(PRIVATE_SRC))"
+	$$(hide) $$(call host-rm,$$(call host-path,$$(PRIVATE_OBJ)))
 	$$(hide) $$(PRIVATE_CC) -MMD -MP -MF $$(PRIVATE_DEPS) $$(PRIVATE_CFLAGS) $$(call host-path,$$(PRIVATE_SRC)) -o $$(call host-path,$$(PRIVATE_OBJ))
 
 _JSON_INTERMEDIATE := $$(_OBJ).commands.json
@@ -1431,19 +1434,13 @@ $$(_OBJ): PRIVATE_OUT       := $$(TARGET_OUT)
 $$(_OBJ): PRIVATE_RS_TRIPLE := $$(RS_TRIPLE)
 $$(_OBJ): PRIVATE_COMPAT    := $$(_COMPAT)
 $$(_OBJ): PRIVATE_LIB_PATH  := $$(RENDERSCRIPT_TOOLCHAIN_PREBUILT_ROOT)/platform/$(TARGET_ARCH)
+$$(_OBJ): PRIVATE_SYSROOT_LINK_ARG := $$(SYSROOT_LINK_ARG)
 
 ifeq ($$(LOCAL_SHORT_COMMANDS),true)
 _OPTIONS_LISTFILE := $$(_OBJ).cflags
 $$(_OBJ): $$(call generate-list-file,$$(_CPP_FLAGS),$$(_OPTIONS_LISTFILE))
 $$(_OBJ): PRIVATE_CPPFLAGS := @$$(call host-path,$$(_OPTIONS_LISTFILE))
 $$(_OBJ): $$(_OPTIONS_LISTFILE)
-endif
-
-# x86_64 & mips64 has both lib/ and lib64/, use lib64 for 64bit RenderScript compilation.
-ifneq ($(filter x86_64 mips64,$(TARGET_ARCH_ABI)),)
-$$(_OBJ): PRIVATE_SYS_PATH := $$(call host-path,$(SYSROOT_LINK)/usr/lib64)
-else
-$$(_OBJ): PRIVATE_SYS_PATH := $$(call host-path,$(SYSROOT_LINK)/usr/lib)
 endif
 
 # llvm-rc-cc.exe has problem accepting input *.rs with path. To workaround:
@@ -1458,8 +1455,8 @@ $$(_OBJ): $$(_RS_SRC) $$(LOCAL_MAKEFILE) $$(NDK_APP_APPLICATION_MK)
 	$$(hide) \
 	cd $$(call host-path,$$(dir $$(PRIVATE_RS_SRC))) && $$(PRIVATE_RS_CC) -o $$(call host-path,$$(abspath $$(dir $$(PRIVATE_OBJ))))/ -d $$(abspath $$(call host-path,$$(dir $$(PRIVATE_OBJ)))) -MD -reflect-c++ -target-api $(strip $(subst android-,,$(APP_PLATFORM))) $$(PRIVATE_RS_FLAGS) $$(notdir $$(PRIVATE_RS_SRC))
 	$$(hide) \
-	$$(PRIVATE_RS_BCC) -O3 -o $$(call host-path,$$(PRIVATE_BC_OBJ)) -fPIC -shared -rt-path $$(PRIVATE_LIB_PATH)/librsrt.bc -mtriple $$(PRIVATE_RS_TRIPLE) $$(call host-path,$$(PRIVATE_BC_SRC)) && \
-	$$(PRIVATE_LD) -shared -Bsymbolic -z noexecstack -z relro -z now -nostdlib $$(call host-path,$$(PRIVATE_BC_OBJ)) $$(PRIVATE_LIB_PATH)/libcompiler_rt.a -o $$(call host-path,$$(PRIVATE_OUT)/librs.$$(PRIVATE_BC_SO)) -L $$(PRIVATE_SYS_PATH) -L $$(PRIVATE_LIB_PATH) -lRSSupport -lm -lc && \
+	$$(PRIVATE_RS_BCC) -O3 -o $$(call host-path,$$(PRIVATE_BC_OBJ)) -fPIC -shared -rt-path $$(PRIVATE_LIB_PATH)/librsrt.bc -mtriple $$(PRIVATE_RS_TRIPLE) $$(call host-path,$$(PRIVATE_BC_SRC))
+	$$(PRIVATE_LD) -shared -Bsymbolic -z noexecstack -z relro -z now -nostdlib $$(call host-path,$$(PRIVATE_BC_OBJ)) $$(PRIVATE_LIB_PATH)/libcompiler_rt.a -o $$(call host-path,$$(PRIVATE_OUT)/librs.$$(PRIVATE_BC_SO)) $$(PRIVATE_SYSROOT_LINK_ARG) -L $$(PRIVATE_LIB_PATH) -lRSSupport -lm -lc
 	$$(PRIVATE_CXX) -MMD -MP -MF $$(PRIVATE_DEPS) $$(PRIVATE_CPPFLAGS) $$(call host-path,$$(PRIVATE_CPP_SRC)) -o $$(call host-path,$$(PRIVATE_OBJ))
 else
 $$(_OBJ): $$(_RS_SRC) $$(LOCAL_MAKEFILE) $$(NDK_APP_APPLICATION_MK)
@@ -1567,8 +1564,6 @@ _FLAGS := \
     $$(NDK_APP_CONLYFLAGS) \
     $$(LOCAL_CFLAGS) \
     $$(LOCAL_CONLYFLAGS) \
-    --sysroot $$(call host-path,$$(SYSROOT_INC)) \
-    $(SYSROOT_ARCH_INC_ARG) \
     -c \
 
 _TEXT := Compile $$(call get-src-file-text,$1)
@@ -1597,8 +1592,6 @@ _FLAGS := \
     $$(NDK_APP_ASFLAGS) \
     $$(LOCAL_CFLAGS) \
     $$(LOCAL_ASFLAGS) \
-    --sysroot $$(call host-path,$$(SYSROOT_INC)) \
-    $(SYSROOT_ARCH_INC_ARG) \
     -c \
 
 _TEXT := Compile $$(call get-src-file-text,$1)
@@ -1704,8 +1697,6 @@ _FLAGS := \
     $$(LOCAL_CFLAGS) \
     $$(LOCAL_CPPFLAGS) \
     $$(LOCAL_CXXFLAGS) \
-    --sysroot $$(call host-path,$$(SYSROOT_INC)) \
-    $(SYSROOT_ARCH_INC_ARG) \
     -c \
 
 _CC   := $$(NDK_CCACHE) $$(TARGET_CXX)
@@ -1795,8 +1786,6 @@ _FLAGS := \
     $$(NDK_APP_CONLYFLAGS) \
     $$(LOCAL_CFLAGS) \
     $$(LOCAL_CONLYFLAGS) \
-    --sysroot $$(call host-path,$$(SYSROOT_INC)) \
-    $(SYSROOT_ARCH_INC_ARG) \
     -c \
 )
 
@@ -1841,8 +1830,6 @@ _FLAGS := \
     $$(LOCAL_CFLAGS) \
     $$(LOCAL_CPPFLAGS) \
     $$(LOCAL_CXXFLAGS) \
-    --sysroot $$(call host-path,$$(SYSROOT_INC)) \
-    $(SYSROOT_ARCH_INC_ARG) \
     -c\
 )
 
@@ -1891,8 +1878,6 @@ _CPP_FLAGS := \
     $$(LOCAL_CFLAGS) \
     $$(LOCAL_CPPFLAGS) \
     $$(LOCAL_CXXFLAGS) \
-    --sysroot $$(call host-path,$$(SYSROOT_INC)) \
-    $(SYSROOT_ARCH_INC_ARG) \
     -fno-rtti \
     -c \
 

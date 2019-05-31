@@ -3,8 +3,6 @@ LOCAL_PATH := $(call my-dir)
 # libandroid_support is only needed on LP32.
 ifeq ($(filter $(NDK_KNOWN_DEVICE_ABI64S),$(TARGET_ARCH_ABI)),)
 
-android_support_export_c_includes := $(LOCAL_PATH)/include
-
 ifneq ($(LIBCXX_FORCE_REBUILD),true) # Using prebuilt
 
 LIBCXX_LIBS := ../../cxx-stl/llvm-libc++/libs/$(TARGET_ARCH_ABI)
@@ -12,21 +10,17 @@ LIBCXX_LIBS := ../../cxx-stl/llvm-libc++/libs/$(TARGET_ARCH_ABI)
 include $(CLEAR_VARS)
 LOCAL_MODULE := android_support
 LOCAL_SRC_FILES := $(LIBCXX_LIBS)/lib$(LOCAL_MODULE)$(TARGET_LIB_EXTENSION)
-LOCAL_EXPORT_C_INCLUDES := $(android_support_export_c_includes)
 include $(PREBUILT_STATIC_LIBRARY)
 
 else # Building
 
-android_support_c_includes := $(android_support_export_c_includes)
 android_support_cflags := \
     -Drestrict=__restrict__ \
     -ffunction-sections \
     -fdata-sections \
     -fvisibility=hidden \
 
-# 32-bit ABIs
-
-android_support_c_includes += \
+android_support_c_includes := \
     $(BIONIC_PATH)/libc \
     $(BIONIC_PATH)/libc/upstream-openbsd/android/include \
     $(BIONIC_PATH)/libm \
@@ -36,7 +30,9 @@ android_support_c_includes += \
 android_support_cflags += \
     -include freebsd-compat.h \
     -include openbsd-compat.h \
+    -include $(LOCAL_PATH)/src/support_preinclude.h \
     -D__BIONIC_BUILD_FOR_ANDROID_SUPPORT \
+    -Werror \
 
 android_support_sources := \
     $(BIONIC_PATH)/libc/bionic/c32rtomb.cpp \
@@ -70,7 +66,6 @@ android_support_sources := \
     $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_cosh.c \
     $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_exp.c \
     $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_hypot.c \
-    $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_lgamma.c \
     $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_log.c \
     $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_log10.c \
     $(BIONIC_PATH)/libm/upstream-freebsd/lib/msun/src/e_log2.c \
@@ -127,9 +122,6 @@ LOCAL_CFLAGS := $(android_support_cflags)
 LOCAL_CPPFLAGS := \
     -fvisibility-inlines-hidden \
     -std=c++11 \
-    -Werror \
-
-LOCAL_EXPORT_C_INCLUDES := $(android_support_export_c_includes)
 
 include $(BUILD_STATIC_LIBRARY)
 

@@ -871,6 +871,8 @@ bool TOutputTraverser::visitAggregate(TVisit /* visit */, TIntermAggregate* node
     case EOpAtomicXor:                  out.debug << "AtomicXor";             break;
     case EOpAtomicExchange:             out.debug << "AtomicExchange";        break;
     case EOpAtomicCompSwap:             out.debug << "AtomicCompSwap";        break;
+    case EOpAtomicLoad:                 out.debug << "AtomicLoad";            break;
+    case EOpAtomicStore:                out.debug << "AtomicStore";           break;
 
     case EOpAtomicCounterAdd:           out.debug << "AtomicCounterAdd";      break;
     case EOpAtomicCounterSubtract:      out.debug << "AtomicCounterSubtract"; break;
@@ -894,6 +896,8 @@ bool TOutputTraverser::visitAggregate(TVisit /* visit */, TIntermAggregate* node
     case EOpImageAtomicXor:             out.debug << "imageAtomicXor";        break;
     case EOpImageAtomicExchange:        out.debug << "imageAtomicExchange";   break;
     case EOpImageAtomicCompSwap:        out.debug << "imageAtomicCompSwap";   break;
+    case EOpImageAtomicLoad:            out.debug << "imageAtomicLoad";       break;
+    case EOpImageAtomicStore:           out.debug << "imageAtomicStore";      break;
 #ifdef AMD_EXTENSIONS
     case EOpImageLoadLod:               out.debug << "imageLoadLod";          break;
     case EOpImageStoreLod:              out.debug << "imageStoreLod";         break;
@@ -952,7 +956,13 @@ bool TOutputTraverser::visitAggregate(TVisit /* visit */, TIntermAggregate* node
     case EOpSparseTextureGatherLodOffsets:  out.debug << "sparseTextureGatherLodOffsets";   break;
     case EOpSparseImageLoadLod:             out.debug << "sparseImageLoadLod";              break;
 #endif
-
+#ifdef NV_EXTENSIONS
+    case EOpImageSampleFootprintNV:             out.debug << "imageSampleFootprintNV";          break;
+    case EOpImageSampleFootprintClampNV:        out.debug << "imageSampleFootprintClampNV";     break;
+    case EOpImageSampleFootprintLodNV:          out.debug << "imageSampleFootprintLodNV";       break;
+    case EOpImageSampleFootprintGradNV:         out.debug << "imageSampleFootprintGradNV";      break;
+    case EOpImageSampleFootprintGradClampNV:    out.debug << "mageSampleFootprintGradClampNV";  break;
+#endif
     case EOpAddCarry:                   out.debug << "addCarry";              break;
     case EOpSubBorrow:                  out.debug << "subBorrow";             break;
     case EOpUMulExtended:               out.debug << "uMulExtended";          break;
@@ -1037,6 +1047,14 @@ bool TOutputTraverser::visitAggregate(TVisit /* visit */, TIntermAggregate* node
 
     case EOpSubpassLoad:   out.debug << "subpassLoad";   break;
     case EOpSubpassLoadMS: out.debug << "subpassLoadMS"; break;
+
+#ifdef NV_EXTENSIONS
+    case EOpTraceNV:                          out.debug << "traceNVX"; break;
+    case EOpReportIntersectionNV:             out.debug << "reportIntersectionNVX"; break;
+    case EOpIgnoreIntersectionNV:             out.debug << "ignoreIntersectionNVX"; break;
+    case EOpTerminateRayNV:                   out.debug << "terminateRayNVX"; break;
+    case EOpWritePackedPrimitiveIndices4x8NV: out.debug << "writePackedPrimitiveIndices4x8NV"; break;
+#endif
 
     default: out.debug.message(EPrefixError, "Bad aggregation op");
     }
@@ -1131,7 +1149,7 @@ static void OutputDouble(TInfoSink& out, double value, TOutputTraverser::EExtraO
         {
             out.debug << " : ";
             long long b = *reinterpret_cast<long long*>(&value);
-            for (int i = 0; i < 8 * sizeof(value); ++i, ++b) {
+            for (size_t i = 0; i < 8 * sizeof(value); ++i, ++b) {
                 out.debug << ((b & 0x8000000000000000) != 0 ? "1" : "0");
                 b <<= 1;
             }
@@ -1441,6 +1459,16 @@ void TIntermediate::output(TInfoSink& infoSink, bool tree)
         }
         break;
 
+#ifdef NV_EXTENSIONS
+    case EShLangMeshNV:
+        infoSink.debug << "max_vertices = " << vertices << "\n";
+        infoSink.debug << "max_primitives = " << primitives << "\n";
+        infoSink.debug << "output primitive = " << TQualifier::getGeometryString(outputPrimitive) << "\n";
+        // Fall through
+
+    case EShLangTaskNV:
+        // Fall through
+#endif
     case EShLangCompute:
         infoSink.debug << "local_size = (" << localSize[0] << ", " << localSize[1] << ", " << localSize[2] << ")\n";
         {

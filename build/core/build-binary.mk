@@ -68,30 +68,9 @@ libs_in_ldflags := $(filter -l% %.so %.a,$(LOCAL_LDLIBS) $(LOCAL_LDFLAGS))
 libs_in_ldflags := \
     $(filter-out -Wl$(comma)--exclude-libs$(comma)%,$(libs_in_ldflags))
 
-# Remove the system libraries we know about from the warning, it's ok
-# (and actually expected) to link them with -l<name>.
-system_libs := \
-    EGL \
-    GLESv1_CM \
-    GLESv2 \
-    GLESv3 \
-    OpenMAXAL \
-    OpenSLES \
-    aaudio \
-    android \
-    atomic \
-    c \
-    camera2ndk \
-    dl \
-    jnigraphics \
-    log \
-    m \
-    mediandk \
-    stdc++ \
-    vulkan \
-    z \
+include $(BUILD_SYSTEM)/system_libs.mk
 
-libs_in_ldflags := $(filter-out $(addprefix -l,$(system_libs)), $(libs_in_ldflags))
+libs_in_ldflags := $(filter-out $(NDK_SYSTEM_LIBS:lib%.so=-l%),$(libs_in_ldflags))
 
 ifneq (,$(strip $(libs_in_ldflags)))
   $(call __ndk_info,WARNING:$(LOCAL_MAKEFILE):$(LOCAL_MODULE): non-system libraries in linker flags: $(libs_in_ldflags))
@@ -182,10 +161,9 @@ LOCAL_RS_EXTENSION := $(default-rs-extensions)
 
 LOCAL_LDFLAGS += -Wl,--build-id
 
-ifeq ($(NDK_TOOLCHAIN_VERSION),clang)
-    ifeq ($(filter system stlport_shared stlport_static,$(NDK_APP_STL)),)
-        LOCAL_LDFLAGS += -nostdlib++
-    endif
+ifneq ($(NDK_APP_STL),system)
+    LOCAL_CFLAGS += -nostdinc++
+    LOCAL_LDFLAGS += -nostdlib++
 endif
 
 #
@@ -196,29 +174,34 @@ ifneq ($(LOCAL_ALLOW_UNDEFINED_SYMBOLS),true)
   LOCAL_LDFLAGS += $(TARGET_NO_UNDEFINED_LDFLAGS)
 endif
 
-# Toolchain by default disallows generated code running from the heap and stack.
-# If LOCAL_DISABLE_NO_EXECUTE is true, we allow that
+# These flags are used to enforce the NX (no execute) security feature in the
+# generated machine code. This adds a special section to the generated shared
+# libraries that instruct the Linux kernel to disable code execution from the
+# stack and the heap.
 #
-ifeq ($(LOCAL_DISABLE_NO_EXECUTE),true)
-  LOCAL_CFLAGS += $(TARGET_DISABLE_NO_EXECUTE_CFLAGS)
-  LOCAL_LDFLAGS += $(TARGET_DISABLE_NO_EXECUTE_LDFLAGS)
-else
-  LOCAL_CFLAGS += $(TARGET_NO_EXECUTE_CFLAGS)
-  LOCAL_LDFLAGS += $(TARGET_NO_EXECUTE_LDFLAGS)
-endif
+# TODO: Should be a Clang default: https://github.com/android-ndk/ndk/issues/812
+LOCAL_CFLAGS += -Wa,--noexecstack
+LOCAL_LDFLAGS += -Wl,-z,noexecstack
 
-# Toolchain by default provides relro and GOT protections.
-# If LOCAL_DISABLE_RELRO is true, we disable the protections.
+# This flag is used to mark certain regions of the resulting executable or
+# shared library as being read-only after the dynamic linker has run. This makes
+# GOT overwrite security attacks harder to exploit.
 #
-ifeq ($(LOCAL_DISABLE_RELRO),true)
-  LOCAL_LDFLAGS += $(TARGET_DISABLE_RELRO_LDFLAGS)
-else
-  LOCAL_LDFLAGS += $(TARGET_RELRO_LDFLAGS)
-endif
+# TODO: Should be a Clang default: https://github.com/android-ndk/ndk/issues/812
+LOCAL_LDFLAGS += -Wl,-z,relro
+
+# This flag instructs the loader to resolve relocations immediately. For Android
+# the loader always does this, but we should pass this flag in case the lazy
+# behavior is ever added.
+#
+# TODO: Should be a Clang default: https://github.com/android-ndk/ndk/issues/812
+LOCAL_LDFLAGS += -Wl,-z,now
 
 # We enable shared text relocation warnings by default. These are not allowed in
 # current versions of Android (android-21 for LP64 ABIs, android-23 for LP32
 # ABIs).
+#
+# TODO: Should be a Clang default: https://github.com/android-ndk/ndk/issues/812
 LOCAL_LDFLAGS += -Wl,--warn-shared-textrel
 
 # We enable fatal linker warnings by default.
@@ -233,22 +216,6 @@ ifeq ($(LOCAL_DISABLE_FORMAT_STRING_CHECKS),true)
   LOCAL_CFLAGS += $(TARGET_DISABLE_FORMAT_STRING_CFLAGS)
 else
   LOCAL_CFLAGS += $(TARGET_FORMAT_STRING_CFLAGS)
-endif
-
-# Enable PIE for dynamic executables.
-ifeq ($(call module-get-class,$(LOCAL_MODULE)),EXECUTABLE)
-    ifeq (,$(filter -static,$(TARGET_LDFLAGS) $(LOCAL_LDFLAGS) $(NDK_APP_LDFLAGS)))
-        # x86 and x86_64 use large model pic, whereas everything else uses small
-        # model. In the past we've always used -fPIE, but the LLVMgold plugin
-        # (for LTO) complains if the models are mismatched.
-        ifneq (,$(filter x86 x86_64,$(TARGET_ARCH_ABI)))
-            LOCAL_CFLAGS += -fPIE
-            LOCAL_LDFLAGS += -fPIE -pie
-        else
-            LOCAL_CFLAGS += -fpie
-            LOCAL_LDFLAGS += -fpie -pie
-        endif
-    endif
 endif
 
 # http://b.android.com/222239
@@ -567,20 +534,18 @@ CLEAN_OBJS_DIRS     += $(LOCAL_OBJS_DIR)
 # Handle the static and shared libraries this module depends on
 #
 
-# If LOCAL_LDLIBS contains anything like -l<library> then
-# prepend a -L$(SYSROOT_LINK)/usr/lib to it to ensure that the linker
-# looks in the right location
-#
-ifneq ($(filter -l%,$(LOCAL_LDLIBS)),)
-    LOCAL_LDLIBS := -L$(call host-path,$(SYSROOT_LINK)/usr/lib) $(LOCAL_LDLIBS)
-    ifneq ($(filter x86_64 mips64,$(TARGET_ARCH_ABI)),)
-        LOCAL_LDLIBS := -L$(call host-path,$(SYSROOT_LINK)/usr/lib64) $(LOCAL_LDLIBS)
-    endif
-endif
-
 my_ldflags := $(TARGET_LDFLAGS) $(LOCAL_LDFLAGS) $(NDK_APP_LDFLAGS)
 ifneq ($(filter armeabi%,$(TARGET_ARCH_ABI)),)
     my_ldflags += $(TARGET_$(my_link_arm_mode)_LDFLAGS)
+endif
+
+# https://github.com/android-ndk/ndk/issues/855
+ifeq ($(HOST_OS),windows)
+    ndk_fuse_ld_flags := $(filter -fuse-ld=%,$(my_ldflags))
+    ndk_used_linker := $(lastword $(ndk_fuse_ld_flags))
+    ifeq ($(ndk_used_linker),-fuse-ld=lld)
+        my_ldflags += -Wl,--no-threads
+    endif
 endif
 
 # When LOCAL_SHORT_COMMANDS is defined to 'true' we are going to write the
@@ -608,7 +573,7 @@ $(LOCAL_BUILT_MODULE): PRIVATE_LDLIBS  := $(LOCAL_LDLIBS) $(TARGET_LDLIBS)
 $(LOCAL_BUILT_MODULE): PRIVATE_NAME := $(notdir $(LOCAL_BUILT_MODULE))
 $(LOCAL_BUILT_MODULE): PRIVATE_CXX := $(TARGET_CXX)
 $(LOCAL_BUILT_MODULE): PRIVATE_CC := $(TARGET_CC)
-$(LOCAL_BUILT_MODULE): PRIVATE_SYSROOT_LINK := $(SYSROOT_LINK)
+$(LOCAL_BUILT_MODULE): PRIVATE_SYSROOT_API_LIB_DIR := $(SYSROOT_API_LIB_DIR)
 
 ifeq ($(call module-get-class,$(LOCAL_MODULE)),STATIC_LIBRARY)
 
