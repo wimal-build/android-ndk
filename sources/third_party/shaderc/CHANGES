@@ -1,11 +1,27 @@
 Revision history for Shaderc
 
-v2017.1-dev 2017-01-02
+v2017.2-dev 2017-03-10
+ - Support GLSL 4.6 and ESSL 3.2
+ - Add options for automatically set bindings for (uniform) resources that
+   don't have bindings set in shader source.
+ - Add option for using HLSL IO mappings as expressed in source.
+ - Add options for setting resource binding base numbers.
+ - Add option to use HLSL resource register numbers for bindings.
+ - HLSL compilation now defaults to HLSL packing rules.
+   (This change is inherited from Glslang commit 7cca140.)
+ - CMake install rules uses GNUInstallDirs.  For example, install to lib64
+   when that is the norm for the target system.
+
+v2017.1 2017-03-10
  - Add option to automatically assign bindings to uniform variables
    that don't have an explicit 'binding' layout in the shader source.
  - Enable NVIDIA extensions by default in GLSL compilation
+ - README mentions language bindings provided by 3rd parties.
+ - README describes the known-good branch on GitHub
+ - Fixed examples in shaderc.h; added C API use to examples/online-compile
  - Fixes issues:
    #289: Don't output an object file when compilation fails.
+   #296: Enable use of the CMake in Android Studio.
 
 v2016.2 2016-12-13
  - Describe Shaderc's level of stability.

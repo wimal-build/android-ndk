@@ -25,17 +25,17 @@ libcxxabi_src_files := \
     src/cxa_exception_storage.cpp \
     src/cxa_guard.cpp \
     src/cxa_handlers.cpp \
-    src/cxa_new_delete.cpp \
     src/cxa_personality.cpp \
     src/cxa_thread_atexit.cpp \
     src/cxa_unexpected.cpp \
     src/cxa_vector.cpp \
     src/cxa_virtual.cpp \
-    src/exception.cpp \
     src/fallback_malloc.cpp \
     src/private_typeinfo.cpp \
-    src/stdexcept.cpp \
-    src/typeinfo.cpp
+    src/stdlib_exception.cpp \
+    src/stdlib_new_delete.cpp \
+    src/stdlib_stdexcept.cpp \
+    src/stdlib_typeinfo.cpp \
 
 libcxxabi_includes := \
     $(LOCAL_PATH)/include \
@@ -44,7 +44,7 @@ libcxxabi_includes := \
     $(LOCAL_PATH)/../../ndk/sources/android/support/include
 
 libcxxabi_cflags := -D__STDC_FORMAT_MACROS
-libcxxabi_cppflags := -std=c++11
+libcxxabi_cppflags := -std=c++11 -Wno-unknown-attributes
 
 ifneq (,$(filter armeabi%,$(TARGET_ARCH_ABI)))
     use_llvm_unwinder := true

@@ -139,6 +139,7 @@ ValidationState_t::ValidationState_t(const spv_const_context ctx,
       current_layout_section_(kLayoutCapabilities),
       module_functions_(),
       module_capabilities_(),
+      module_extensions_(),
       ordered_instructions_(),
       all_definitions_(),
       global_vars_(),
@@ -208,25 +209,17 @@ bool ValidationState_t::IsDefinedId(uint32_t id) const {
 }
 
 const Instruction* ValidationState_t::FindDef(uint32_t id) const {
-  if (all_definitions_.count(id) == 0) {
+  auto it = all_definitions_.find(id);
+  if (it == all_definitions_.end())
     return nullptr;
-  } else {
-    /// We are in a const function, so we cannot use defs.operator[]().
-    /// Luckily we know the key exists, so defs_.at() won't throw an
-    /// exception.
-    return all_definitions_.at(id);
-  }
+  return it->second;
 }
 
 Instruction* ValidationState_t::FindDef(uint32_t id) {
-  if (all_definitions_.count(id) == 0) {
+  auto it = all_definitions_.find(id);
+  if (it == all_definitions_.end())
     return nullptr;
-  } else {
-    /// We are in a const function, so we cannot use defs.operator[]().
-    /// Luckily we know the key exists, so defs_.at() won't throw an
-    /// exception.
-    return all_definitions_.at(id);
-  }
+  return it->second;
 }
 
 // Increments the instruction count. Used for diagnostic
@@ -299,19 +292,33 @@ void ValidationState_t::RegisterCapability(SpvCapability cap) {
       features_.declare_int16_type = true;
       features_.declare_float16_type = true;
       features_.free_fp_rounding_mode = true;
+      break;
+    case SpvCapabilityVariablePointers:
+      features_.variable_pointers = true;
+      features_.variable_pointers_storage_buffer = true;
+      break;
+    case SpvCapabilityVariablePointersStorageBuffer:
+      features_.variable_pointers_storage_buffer = true;
+      break;
     default:
       break;
   }
 }
 
-bool ValidationState_t::HasAnyOf(const CapabilitySet& capabilities) const {
-  bool found = false;
-  bool any_queried = false;
-  capabilities.ForEach([&found, &any_queried, this](SpvCapability c) {
-    any_queried = true;
-    found = found || this->module_capabilities_.Contains(c);
-  });
-  return !any_queried || found;
+void ValidationState_t::RegisterExtension(Extension ext) {
+  if (module_extensions_.Contains(ext)) return;
+
+  module_extensions_.Add(ext);
+}
+
+bool ValidationState_t::HasAnyOfCapabilities(
+    const CapabilitySet& capabilities) const {
+  return module_capabilities_.HasAnyOf(capabilities);
+}
+
+bool ValidationState_t::HasAnyOfExtensions(
+    const ExtensionSet& extensions) const {
+  return module_extensions_.HasAnyOf(extensions);
 }
 
 void ValidationState_t::set_addressing_model(SpvAddressingModel am) {

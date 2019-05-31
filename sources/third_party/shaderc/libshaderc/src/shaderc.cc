@@ -188,7 +188,7 @@ class InternalFileIncluder : public shaderc_util::CountingIncluder {
       const char* requested_source, const char* requesting_source,
       IncludeType type, size_t include_depth) override {
     if (!AreValidCallbacks()) {
-      const char kUnexpectedIncludeError[] =
+      static const char kUnexpectedIncludeError[] =
           "#error unexpected include directive";
       return new glslang::TShader::Includer::IncludeResult{
           "", kUnexpectedIncludeError, strlen(kUnexpectedIncludeError),
@@ -250,6 +250,49 @@ shaderc_util::Compiler::Limit CompilerLimit(shaderc_limit limit) {
   assert(0 && "Should not have reached here");
   return static_cast<shaderc_util::Compiler::Limit>(0);
 }
+
+// Returns the Compiler::UniformKind for the given shaderc_uniform_kind.
+shaderc_util::Compiler::UniformKind GetUniformKind(shaderc_uniform_kind kind) {
+  switch (kind) {
+    case shaderc_uniform_kind_texture:
+      return shaderc_util::Compiler::UniformKind::Texture;
+    case shaderc_uniform_kind_sampler:
+      return shaderc_util::Compiler::UniformKind::Sampler;
+    case shaderc_uniform_kind_image:
+      return shaderc_util::Compiler::UniformKind::Image;
+    case shaderc_uniform_kind_buffer:
+      return shaderc_util::Compiler::UniformKind::Buffer;
+    case shaderc_uniform_kind_storage_buffer:
+      return shaderc_util::Compiler::UniformKind::StorageBuffer;
+    case shaderc_uniform_kind_unordered_access_view:
+      return shaderc_util::Compiler::UniformKind::UnorderedAccessView;
+  }
+  assert(0 && "Should not have reached here");
+  return static_cast<shaderc_util::Compiler::UniformKind>(0);
+}
+
+// Returns the Compiler::Stage for generic stage values in shaderc_shader_kind.
+shaderc_util::Compiler::Stage GetStage(shaderc_shader_kind kind) {
+  switch (kind) {
+    case shaderc_vertex_shader:
+      return shaderc_util::Compiler::Stage::Vertex;
+    case shaderc_fragment_shader:
+      return shaderc_util::Compiler::Stage::Fragment;
+    case shaderc_compute_shader:
+      return shaderc_util::Compiler::Stage::Compute;
+    case shaderc_tess_control_shader:
+      return shaderc_util::Compiler::Stage::TessControl;
+    case shaderc_tess_evaluation_shader:
+      return shaderc_util::Compiler::Stage::TessEval;
+    case shaderc_geometry_shader:
+      return shaderc_util::Compiler::Stage::Geometry;
+    default:
+      break;
+  }
+  assert(0 && "Should not have reached here");
+  return static_cast<shaderc_util::Compiler::Stage>(0);
+}
+
 
 }  // anonymous namespace
 
@@ -367,6 +410,42 @@ void shaderc_compile_options_set_limit(
 void shaderc_compile_options_set_auto_bind_uniforms(
     shaderc_compile_options_t options, bool auto_bind) {
   options->compiler.SetAutoBindUniforms(auto_bind);
+}
+
+void shaderc_compile_options_set_hlsl_io_mapping(
+    shaderc_compile_options_t options, bool hlsl_iomap) {
+  options->compiler.SetHlslIoMapping(hlsl_iomap);
+}
+
+void shaderc_compile_options_set_hlsl_offsets(
+    shaderc_compile_options_t options, bool hlsl_offsets) {
+  options->compiler.SetHlslOffsets(hlsl_offsets);
+}
+
+void shaderc_compile_options_set_binding_base(shaderc_compile_options_t options,
+                                              shaderc_uniform_kind kind,
+                                              uint32_t base) {
+  options->compiler.SetAutoBindingBase(GetUniformKind(kind), base);
+}
+
+void shaderc_compile_options_set_binding_base_for_stage(
+    shaderc_compile_options_t options, shaderc_shader_kind shader_kind,
+    shaderc_uniform_kind kind, uint32_t base) {
+  options->compiler.SetAutoBindingBaseForStage(GetStage(shader_kind),
+                                               GetUniformKind(kind), base);
+}
+
+void shaderc_compile_options_set_hlsl_register_set_and_binding_for_stage(
+    shaderc_compile_options_t options, shaderc_shader_kind shader_kind,
+    const char* reg, const char* set, const char* binding) {
+  options->compiler.SetHlslRegisterSetAndBindingForStage(GetStage(shader_kind),
+                                                         reg, set, binding);
+}
+
+void shaderc_compile_options_set_hlsl_register_set_and_binding(
+    shaderc_compile_options_t options, const char* reg, const char* set,
+    const char* binding) {
+  options->compiler.SetHlslRegisterSetAndBinding(reg, set, binding);
 }
 
 shaderc_compiler_t shaderc_compiler_initialize() {

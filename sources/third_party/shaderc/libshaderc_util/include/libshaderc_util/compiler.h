@@ -15,6 +15,8 @@
 #ifndef LIBSHADERC_UTIL_INC_COMPILER_H
 #define LIBSHADERC_UTIL_INC_COMPILER_H
 
+#include <array>
+#include <cassert>
 #include <functional>
 #include <ostream>
 #include <string>
@@ -125,6 +127,46 @@ class Compiler {
 #undef RESOURCE
   };
 
+  // Types of uniform variables.
+  enum class UniformKind {
+    // Image, and image buffer.
+    Image = 0,
+    // Pure sampler.
+    Sampler = 1,
+    // Sampled texture in GLSL.
+    // Shader Resource View, for HLSL.  (Read-only image or storage buffer.)
+    Texture = 2,
+    // Uniform Buffer Object, or UBO, in GLSL.
+    // Also a Cbuffer in HLSL.
+    Buffer = 3,
+    // Shader Storage Buffer Object, or SSBO
+    StorageBuffer = 4,
+    // Uniform Access View, in HLSL.  (Writable storage image or storage
+    // buffer.)
+    UnorderedAccessView = 5,
+  };
+  enum { kNumUniformKinds = int(UniformKind::UnorderedAccessView) + 1 };
+
+  // Shader pipeline stage.
+  // TODO(dneto): Replaces interface uses of EShLanguage with this enum.
+  enum class Stage {
+    Vertex,
+    TessEval,
+    TessControl,
+    Geometry,
+    Fragment,
+    Compute,
+  };
+  enum { kNumStages = int(Stage::Compute) + 1 };
+
+  // Returns a std::array of all the Stage values.
+  const std::array<Stage, kNumStages>& stages() const {
+    static std::array<Stage, kNumStages> values{
+        {Stage::Vertex, Stage::TessEval, Stage::TessControl, Stage::Geometry,
+         Stage::Fragment, Stage::Compute}};
+    return values;
+  }
+
   // Creates an default compiler instance targeting at Vulkan environment. Uses
   // version 110 and no profile specification as the default for GLSL.
   Compiler()
@@ -140,7 +182,11 @@ class Compiler {
         target_env_(TargetEnv::Vulkan),
         source_language_(SourceLanguage::GLSL),
         limits_(kDefaultTBuiltInResource),
-        auto_bind_uniforms_(false) {}
+        auto_bind_uniforms_(false),
+        auto_binding_base_(),
+        hlsl_iomap_(false),
+        hlsl_offsets_(false),
+        hlsl_explicit_bindings_() {}
 
   // Requests that the compiler place debug information into the object code,
   // such as identifier names and line numbers.
@@ -182,6 +228,53 @@ class Compiler {
   // Set whether the compiler automatically assigns bindings to
   // uniform variables that don't have explicit bindings.
   void SetAutoBindUniforms(bool auto_bind) { auto_bind_uniforms_ = auto_bind; }
+
+  // Sets the lowest binding number used when automatically assigning bindings
+  // for uniform resources of the given type, for all shader stages.  The default
+  // base is zero.
+  void SetAutoBindingBase(UniformKind kind, uint32_t base) {
+    for (auto stage : stages()) {
+      SetAutoBindingBaseForStage(stage, kind, base);
+    }
+  }
+
+  // Sets the lowest binding number used when automatically assigning bindings
+  // for uniform resources of the given type for a specific shader stage.  The
+  // default base is zero.
+  void SetAutoBindingBaseForStage(Stage stage, UniformKind kind,
+                                  uint32_t base) {
+    auto_binding_base_[static_cast<int>(stage)][static_cast<int>(kind)] = base;
+  }
+
+  // Use HLSL IO mapping rules for bindings.  Default is false.
+  void SetHlslIoMapping(bool hlsl_iomap) { hlsl_iomap_ = hlsl_iomap; }
+
+  // Use HLSL rules for offsets in "transparent" memory.  These allow for
+  // tighter packing of some combinations of types than standard GLSL packings.
+  void SetHlslOffsets(bool hlsl_offsets) { hlsl_offsets_ = hlsl_offsets; }
+
+  // Sets an explicit set and binding for the given HLSL register.
+  void SetHlslRegisterSetAndBinding(const std::string& reg,
+                                    const std::string& set,
+                                    const std::string& binding) {
+    for (auto stage : stages()) {
+      SetHlslRegisterSetAndBindingForStage(stage, reg, set, binding);
+    }
+  }
+
+  // Sets an explicit set and binding for the given HLSL register in the given
+  // shader stage.  For example,
+  //    SetHlslRegisterSetAndBinding(Stage::Fragment, "t1", "4", "5")
+  // means register "t1" in a fragment shader should map to binding 5 in set 4.
+  // (Glslang wants this data as strings, not ints or enums.)  The string data is
+  // copied.
+  void SetHlslRegisterSetAndBindingForStage(Stage stage, const std::string& reg,
+                                            const std::string& set,
+                                            const std::string& binding) {
+    hlsl_explicit_bindings_[static_cast<int>(stage)].push_back(reg);
+    hlsl_explicit_bindings_[static_cast<int>(stage)].push_back(set);
+    hlsl_explicit_bindings_[static_cast<int>(stage)].push_back(binding);
+  }
 
   // Compiles the shader source in the input_source_string parameter.
   //
@@ -336,12 +429,51 @@ class Compiler {
   // True if the compiler should automatically bind uniforms that don't
   // have explicit bindings.
   bool auto_bind_uniforms_;
+
+  // The base binding number per uniform type, per stage, used when automatically
+  // binding uniforms that don't hzve explicit bindings in the shader source.
+  // The default is zero.
+  uint32_t auto_binding_base_[kNumStages][kNumUniformKinds];
+
+  // True if the compiler should use HLSL IO mapping rules when compiling HLSL.
+  bool hlsl_iomap_;
+
+  // True if the compiler should determine block member offsets using HLSL
+  // packing rules instead of standard GLSL rules.
+  bool hlsl_offsets_;
+
+  // A sequence of triples, each triple representing a specific HLSL register
+  // name, and the set and binding numbers it should be mapped to, but in
+  // the form of strings.  This is how Glslang wants to consume the data.
+  std::vector<std::string> hlsl_explicit_bindings_[kNumStages];
 };
 
 // Converts a string to a vector of uint32_t by copying the content of a given
 // string to the vector and returns it. Appends '\0' at the end if extra bytes
 // are required to complete the last element.
 std::vector<uint32_t> ConvertStringToVector(const std::string& str);
+
+// Converts a valid Glslang shader stage value to a Compiler::Stage value.
+inline Compiler::Stage ConvertToStage(EShLanguage stage) {
+  switch (stage) {
+    case EShLangVertex:
+      return Compiler::Stage::Vertex;
+    case EShLangTessControl:
+      return Compiler::Stage::TessEval;
+    case EShLangTessEvaluation:
+      return Compiler::Stage::TessControl;
+    case EShLangGeometry:
+      return Compiler::Stage::Geometry;
+    case EShLangFragment:
+      return Compiler::Stage::Fragment;
+    case EShLangCompute:
+      return Compiler::Stage::Compute;
+    default:
+      break;
+  }
+  assert(false && "Invalid case");
+  return Compiler::Stage::Compute;
+}
 
 }  // namespace shaderc_util
 #endif  // LIBSHADERC_UTIL_INC_COMPILER_H

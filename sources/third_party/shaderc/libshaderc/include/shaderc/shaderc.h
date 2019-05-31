@@ -32,12 +32,19 @@ typedef enum {
 typedef enum {
   // Forced shader kinds. These shader kinds force the compiler to compile the
   // source code as the specified kind of shader.
-  shaderc_glsl_vertex_shader,
-  shaderc_glsl_fragment_shader,
-  shaderc_glsl_compute_shader,
-  shaderc_glsl_geometry_shader,
-  shaderc_glsl_tess_control_shader,
-  shaderc_glsl_tess_evaluation_shader,
+  shaderc_vertex_shader,
+  shaderc_fragment_shader,
+  shaderc_compute_shader,
+  shaderc_geometry_shader,
+  shaderc_tess_control_shader,
+  shaderc_tess_evaluation_shader,
+
+  shaderc_glsl_vertex_shader = shaderc_vertex_shader,
+  shaderc_glsl_fragment_shader = shaderc_fragment_shader,
+  shaderc_glsl_compute_shader = shaderc_compute_shader,
+  shaderc_glsl_geometry_shader = shaderc_geometry_shader,
+  shaderc_glsl_tess_control_shader = shaderc_tess_control_shader,
+  shaderc_glsl_tess_evaluation_shader = shaderc_tess_evaluation_shader,
   // Deduce the shader kind from #pragma annotation in the source code. Compiler
   // will emit error if #pragma annotation is not found.
   shaderc_glsl_infer_from_source,
@@ -172,6 +179,25 @@ typedef enum {
   shaderc_limit_max_combined_clip_and_cull_distances,
   shaderc_limit_max_samples,
 } shaderc_limit;
+
+// Uniform resource kinds.
+// In Vulkan, uniform resources are bound to the pipeline via descriptors
+// with numbered bindings and sets.
+typedef enum {
+  // Image and image buffer.
+  shaderc_uniform_kind_image,
+  // Pure sampler.
+  shaderc_uniform_kind_sampler,
+  // Sampled texture in GLSL, and Shader Resource View in HLSL.
+  shaderc_uniform_kind_texture,
+  // Uniform Buffer Object (UBO) in GLSL.  Cbuffer in HLSL.
+  shaderc_uniform_kind_buffer,
+  // Shader Storage Buffer Object (SSBO) in GLSL.
+  shaderc_uniform_kind_storage_buffer,
+  // Unordered Access View, in HLSL.  (Writable storage image or storage
+  // buffer.)
+  shaderc_uniform_kind_unordered_access_view,
+} shaderc_uniform_kind;
 
 // Usage examples:
 //
@@ -356,6 +382,44 @@ void shaderc_compile_options_set_limit(
 // that aren't already explicitly bound in the shader source.
 void shaderc_compile_options_set_auto_bind_uniforms(
     shaderc_compile_options_t options, bool auto_bind);
+
+// Sets whether the compiler should use HLSL IO mapping rules for bindings.
+// Defaults to false.
+void shaderc_compile_options_set_hlsl_io_mapping(
+    shaderc_compile_options_t options, bool hlsl_iomap);
+
+// Sets whether the compiler should determine block member offsets using HLSL
+// packing rules instead of standard GLSL rules.  Defaults to false.  Only
+// affects GLSL compilation.  HLSL rules are always used when compiling HLSL.
+void shaderc_compile_options_set_hlsl_offsets(
+    shaderc_compile_options_t options, bool hlsl_offsets);
+
+// Sets the base binding number used for for a uniform resource type when
+// automatically assigning bindings.  For GLSL compilation, sets the lowest
+// automatically assigned number.  For HLSL compilation, the regsiter number
+// assigned to the resource is added to this specified base.
+void shaderc_compile_options_set_binding_base(shaderc_compile_options_t options,
+                                              shaderc_uniform_kind kind,
+                                              uint32_t base);
+
+// Like shaderc_compile_options_set_binding_base, but only takes effect when
+// compiling a given shader stage.  The stage is assumed to be one of vertex,
+// fragment, tessellation evaluation, tesselation control, geometry, or compute.
+void shaderc_compile_options_set_binding_base_for_stage(
+    shaderc_compile_options_t options, shaderc_shader_kind shader_kind,
+    shaderc_uniform_kind kind, uint32_t base);
+
+// Sets a descriptor set and binding for an HLSL register in the given stage.
+// This method keeps a copy of the string data.
+void shaderc_compile_options_set_hlsl_register_set_and_binding_for_stage(
+    shaderc_compile_options_t options, shaderc_shader_kind shader_kind,
+    const char* reg, const char* set, const char* binding);
+
+// Like shaderc_compile_options_set_hlsl_register_set_and_binding_for_stage,
+// but affects all shader stages.
+void shaderc_compile_options_set_hlsl_register_set_and_binding(
+    shaderc_compile_options_t options, const char* reg, const char* set,
+    const char* binding);
 
 // An opaque handle to the results of a call to any shaderc_compile_into_*()
 // function.

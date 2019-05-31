@@ -1116,12 +1116,19 @@ bool idUsage::isValid<SpvOpLoad>(const spv_instruction_t* inst,
                           << inst->words[resultTypeIndex] << "' is not defind.";
     return false;
   }
+  const bool uses_variable_pointer =
+      module_.features().variable_pointers ||
+      module_.features().variable_pointers_storage_buffer;
   auto pointerIndex = 3;
   auto pointer = module_.FindDef(inst->words[pointerIndex]);
-  if (!pointer || (addressingModel == SpvAddressingModelLogical &&
-                   !spvOpcodeReturnsLogicalPointer(pointer->opcode()))) {
+  if (!pointer ||
+      (addressingModel == SpvAddressingModelLogical &&
+       ((!uses_variable_pointer &&
+         !spvOpcodeReturnsLogicalPointer(pointer->opcode())) ||
+        (uses_variable_pointer &&
+         !spvOpcodeReturnsLogicalVariablePointer(pointer->opcode()))))) {
     DIAG(pointerIndex) << "OpLoad Pointer <id> '" << inst->words[pointerIndex]
-                       << "' is not a pointer.";
+                       << "' is not a logical pointer.";
     return false;
   }
   auto pointerType = module_.FindDef(pointer->type_id());
@@ -1145,12 +1152,19 @@ bool idUsage::isValid<SpvOpLoad>(const spv_instruction_t* inst,
 template <>
 bool idUsage::isValid<SpvOpStore>(const spv_instruction_t* inst,
                                   const spv_opcode_desc) {
-  auto pointerIndex = 1;
+  const bool uses_variable_pointer =
+      module_.features().variable_pointers ||
+      module_.features().variable_pointers_storage_buffer;
+  const auto pointerIndex = 1;
   auto pointer = module_.FindDef(inst->words[pointerIndex]);
-  if (!pointer || (addressingModel == SpvAddressingModelLogical &&
-                   !spvOpcodeReturnsLogicalPointer(pointer->opcode()))) {
+  if (!pointer ||
+      (addressingModel == SpvAddressingModelLogical &&
+       ((!uses_variable_pointer &&
+         !spvOpcodeReturnsLogicalPointer(pointer->opcode())) ||
+        (uses_variable_pointer &&
+         !spvOpcodeReturnsLogicalVariablePointer(pointer->opcode()))))) {
     DIAG(pointerIndex) << "OpStore Pointer <id> '" << inst->words[pointerIndex]
-                       << "' is not a pointer.";
+                       << "' is not a logical pointer.";
     return false;
   }
   auto pointerType = module_.FindDef(pointer->type_id());
@@ -1835,6 +1849,7 @@ bool idUsage::isValid<SpvOpCompositeInsert>(const spv_instruction_t* inst,
   // The grammar guarantees that the instruction has at least 5 words.
   // ID definition checks ensure these IDs are already defined.
   const size_t resultTypeIndex = 1;
+  const size_t resultIdIndex = 2;
   const size_t compositeIndex = 4;
   auto resultTypeInstr = module_.FindDef(inst->words[resultTypeIndex]);
   auto compositeInstr = module_.FindDef(inst->words[compositeIndex]);
@@ -1842,7 +1857,8 @@ bool idUsage::isValid<SpvOpCompositeInsert>(const spv_instruction_t* inst,
   if (resultTypeInstr != compositeTypeInstr) {
     DIAG(resultTypeIndex)
         << "The Result Type must be the same as Composite type in "
-        << instr_name() << ".";
+        << instr_name() << " yielding Result Id " << inst->words[resultIdIndex]
+        << ".";
     return false;
   }
 
@@ -2404,8 +2420,11 @@ bool idUsage::isValid<SpvOpReturnValue>(const spv_instruction_t* inst,
                      << "' is missing or void.";
     return false;
   }
+  const bool uses_variable_pointer =
+      module_.features().variable_pointers ||
+      module_.features().variable_pointers_storage_buffer;
   if (addressingModel == SpvAddressingModelLogical &&
-      SpvOpTypePointer == valueType->opcode()) {
+      SpvOpTypePointer == valueType->opcode() && !uses_variable_pointer) {
     DIAG(valueIndex)
         << "OpReturnValue value's type <id> '" << value->type_id()
         << "' is a pointer, which is invalid in the Logical addressing model.";

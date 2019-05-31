@@ -20,12 +20,15 @@
 #include <algorithm>
 #include <functional>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "binary.h"
 #include "diagnostic.h"
+#include "enum_string_mapping.h"
+#include "extensions.h"
 #include "instruction.h"
 #include "opcode.h"
 #include "operand.h"
@@ -46,6 +49,7 @@ using std::transform;
 using std::vector;
 
 using libspirv::CfgPass;
+using libspirv::Extension;
 using libspirv::InstructionPass;
 using libspirv::ModuleLayoutPass;
 using libspirv::DataRulesPass;
@@ -117,6 +121,40 @@ void DebugInstructionPass(ValidationState_t& _,
   }
 }
 
+// Parses OpExtension instruction and registers extension.
+void RegisterExtension(ValidationState_t& _,
+                       const spv_parsed_instruction_t* inst) {
+  const std::string extension_str = libspirv::GetExtensionString(inst);
+  Extension extension;
+  if (!GetExtensionFromString(extension_str, &extension)) {
+    // The error will be logged in the ProcessInstruction pass.
+    return;
+  }
+
+  _.RegisterExtension(extension);
+}
+
+// Parses the beginning of the module searching for OpExtension instructions.
+// Registers extensions if recognized. Returns SPV_REQUESTED_TERMINATION
+// once an instruction which is not SpvOpCapability and SpvOpExtension is
+// encountered. According to the SPIR-V spec extensions are declared after
+// capabilities and before everything else.
+spv_result_t ProcessExtensions(
+    void* user_data, const spv_parsed_instruction_t* inst) {
+  const SpvOp opcode = static_cast<SpvOp>(inst->opcode);
+  if (opcode == SpvOpCapability)
+    return SPV_SUCCESS;
+
+  if (opcode == SpvOpExtension) {
+    ValidationState_t& _ = *(reinterpret_cast<ValidationState_t*>(user_data));
+    RegisterExtension(_, inst);
+    return SPV_SUCCESS;
+  }
+
+  // OpExtension block is finished, requesting termination.
+  return SPV_REQUESTED_TERMINATION;
+}
+
 spv_result_t ProcessInstruction(void* user_data,
                                 const spv_parsed_instruction_t* inst) {
   ValidationState_t& _ = *(reinterpret_cast<ValidationState_t*>(user_data));
@@ -135,6 +173,7 @@ spv_result_t ProcessInstruction(void* user_data,
   }
 
   DebugInstructionPass(_, inst);
+  if (auto error = CapabilityPass(_, inst)) return error;
   if (auto error = DataRulesPass(_, inst)) return error;
   if (auto error = IdPass(_, inst)) return error;
   if (auto error = ModuleLayoutPass(_, inst)) return error;
@@ -198,22 +237,29 @@ spv_result_t spvValidate(const spv_const_context context,
 spv_result_t ValidateBinaryUsingContextAndValidationState(
     const spv_context_t& context, const uint32_t* words, const size_t num_words,
     spv_diagnostic* pDiagnostic, ValidationState_t* vstate) {
-  spv_const_binary binary = new spv_const_binary_t{words, num_words};
+  auto binary = std::unique_ptr<spv_const_binary_t>(
+    new spv_const_binary_t{words, num_words});
 
   spv_endianness_t endian;
   spv_position_t position = {};
-  if (spvBinaryEndianness(binary, &endian)) {
+  if (spvBinaryEndianness(binary.get(), &endian)) {
     return libspirv::DiagnosticStream(position, context.consumer,
                                       SPV_ERROR_INVALID_BINARY)
            << "Invalid SPIR-V magic number.";
   }
 
   spv_header_t header;
-  if (spvBinaryHeaderGet(binary, endian, &header)) {
+  if (spvBinaryHeaderGet(binary.get(), endian, &header)) {
     return libspirv::DiagnosticStream(position, context.consumer,
                                       SPV_ERROR_INVALID_BINARY)
            << "Invalid SPIR-V header.";
   }
+
+  // Look for OpExtension instructions and register extensions.
+  // Diagnostics if any will be produced in the next pass (ProcessInstruction).
+  spvBinaryParse(&context, vstate, words, num_words,
+                 /* parsed_header = */ nullptr, ProcessExtensions,
+                 /* diagnostic = */ nullptr);
 
   // NOTE: Parse the module and perform inline validation checks. These
   // checks do not require the the knowledge of the whole module.
@@ -271,6 +317,8 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
 
   // NOTE: Copy each instruction for easier processing
   std::vector<spv_instruction_t> instructions;
+  // Expect average instruction length to be a bit over 2 words.
+  instructions.reserve(binary->wordCount / 2);
   uint64_t index = SPV_INDEX_INSTRUCTION;
   while (index < binary->wordCount) {
     uint16_t wordCount;
@@ -280,7 +328,7 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
     spv_instruction_t inst;
     spvInstructionCopy(&binary->code[index], static_cast<SpvOp>(opcode),
                        wordCount, endian, &inst);
-    instructions.push_back(inst);
+    instructions.emplace_back(std::move(inst));
     index += wordCount;
   }
 
@@ -330,7 +378,9 @@ spv_result_t spvValidateWithOptions(const spv_const_context context,
       hijack_context, binary->code, binary->wordCount, pDiagnostic, &vstate);
 }
 
-spv_result_t spvtools::ValidateBinaryAndKeepValidationState(
+namespace spvtools {
+
+spv_result_t ValidateBinaryAndKeepValidationState(
     const spv_const_context context, spv_const_validator_options options,
     const uint32_t* words, const size_t num_words, spv_diagnostic* pDiagnostic,
     std::unique_ptr<ValidationState_t>* vstate) {
@@ -346,3 +396,9 @@ spv_result_t spvtools::ValidateBinaryAndKeepValidationState(
       hijack_context, words, num_words, pDiagnostic, vstate->get());
 }
 
+spv_result_t ValidateInstructionAndUpdateValidationState(
+    ValidationState_t* vstate, const spv_parsed_instruction_t* inst) {
+  return ProcessInstruction(vstate, inst);
+}
+
+}  // namespace spvtools

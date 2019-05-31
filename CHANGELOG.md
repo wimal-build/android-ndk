@@ -11,95 +11,91 @@ For Android Studio issues, follow the docs on the [Android Studio site].
 Announcements
 -------------
 
- * [Unified Headers] are now enabled by default.
-
-   **Note**: The deprecated headers will be removed in a future release, most
-   likely r16. If they do not work for you, file bugs now.
+ * The deprecated headers have been removed. [Unified Headers] are now simply
+   The Headers.
 
    For migration tips, see [Unified Headers Migration Notes].
 
  * GCC is no longer supported. It will not be removed from the NDK just yet, but
    is no longer receiving backports. It cannot be removed until after libc++ has
    become stable enough to be the default, as some parts of gnustl are still
-   incompatible with Clang. It will likely be removed after that point.
+   incompatible with Clang. It will be removed when the other STLs are removed
+   in r18.
 
- * Gingerbread (android-9) is no longer supported. The minimum API level target
-   in the NDK is now Ice Cream Sandwich (android-14). If your `APP_PLATFORM` is
-   set lower than android-14, android-14 will be used instead.
+ * `libc++` is out of beta and is now the preferred STL in the NDK. Starting in
+   r17, `libc++` is the default STL for CMake and standalone toolchains. If you
+   manually selected a different STL, we strongly encourage you to move to
+   `libc++`. For more details, see [this blog post].
 
- * The CMake toolchain file now supports building assembly code written in YASM
-   to run on x86 and x86-64 architectures. To learn more, see [YASM in CMake].
+ * Support for ARMv5 (armeabi), MIPS, and MIPS64 are deprecated. They will no
+   longer build by default with ndk-build, but are still buildable if they are
+   explicitly named, and will be included by "all", "all32", and "all64".
+   Support for each of these has been removed in r17.
+
+   Both CMake and ndk-build will issue a warning if you target any of these
+   ABIs.
 
 [Unified Headers]: docs/UnifiedHeaders.md
 [Unified Headers Migration Notes]: docs/UnifiedHeadersMigration.md
-[YASM in CMake]: https://android-dot-devsite.googleplex.com/ndk/guides/cmake.html#yasm-cmake
+[this blog post]: https://android-developers.googleblog.com/2017/09/introducing-android-native-development.html
 
-r15c
+r16b
 ----
 
- * Fixes for `_FILE_OFFSET_BITS=64` APIs. See
-   https://github.com/android-ndk/ndk/issues/459 and
-   https://github.com/android-ndk/ndk/issues/442.
- * Fix termios.h APIs for old target APIs. See
-   https://github.com/android-ndk/ndk/issues/441.
- * Added an inline for `ffs` to maintain compatibility with the deprecated
-   headers. See https://github.com/android-ndk/ndk/issues/439.
- * Added legacy pthread API declarations for compatibility with old releases.
-   See https://github.com/android-ndk/ndk/issues/420 and
-   https://github.com/android-ndk/ndk/issues/423.
-
-r15b
-----
-
- * Fix libsync header/library mismatch:
-   https://issuetracker.google.com/62229958.
- * Several libc header updates to improve compatibility with code written for
-   other systems.
-
-APIs
-----
-
- * Added native APIs for Android O. To learn more about these APIs, see the
-   [Native APIs overview].
-    * [AAudio API]
-    * [Hardware Buffer API]
-    * [Shared Memory API]
-
-[Native APIs overview]: https://developer.android.com/ndk/guides/stable_apis.html#a26
-[AAudio API]: https://developer.android.com/ndk/reference/a_audio_8h.html
-[Hardware Buffer API]: https://developer.android.com/ndk/reference/hardware__buffer_8h.html
-[Shared Memory API]: https://developer.android.com/ndk/reference/sharedmem_8h.html
+ * [Issue 573]: Revert the switch to `-Oz` by default.
 
 NDK
 ---
 
- * `awk` is no longer in the NDK. We've replaced all uses of awk with Python.
-
-Clang
------
-
- * Clang has been updated to build 4053586. This is built from Clang 5.0 SVN at
-   r300080.
- * Clang now supports OpenMP (except on MIPS/MIPS64):
-   https://github.com/android-ndk/ndk/issues/9.
+ * ndk-build and CMake now link libatomic by default. Manually adding `-latomic`
+   to your ldflags should no longer be necessary.
+ * Clang static analyzer support for ndk-build has been fixed to work with Clang
+   as a compiler. See https://github.com/android-ndk/ndk/issues/362.
+ * Clang now defaults to -Oz instead of -Os. This should reduce generated code
+   size increases compared to GCC.
+ * GCC no longer uses -Bsymbolic by default. This allows symbol preemption as
+   specified by the C++ standard and as required by ASAN. For libraries with
+   large numbers of public symbols, this may increase the size of your binaries.
+ * Updated binutils to version 2.27. This includes the fix for miscompiles for
+   aarch64: https://sourceware.org/bugzilla/show_bug.cgi?id=21491.
+ * Improved compatibility between our CMake toolchain file and newer CMake
+   versions. The NDK's CMake toolchain file now completely supercedes CMake's
+   built-in NDK support.
+ * ndk-stack now works for arm64 on Darwin.
 
 libc++
 ------
 
- * We've begun slimming down and improving `libandroid_support` to fix libc++
-   reliability issues. https://github.com/android-ndk/ndk/issues/300.
+ * libandroid\_support now contains only APIs needed for supporting libc++ on
+   old devices. See https://github.com/android-ndk/ndk/issues/300.
+
+APIs
+----
+
+ * Added native APIs for Android O MR1.
+     * [Neural Networks API]
+     * [JNI Shared Memory API]
+
+[Neural Networks API]: https://developer.android.com/ndk/guides/neuralnetworks/index.html
+[JNI Shared Memory API]: https://developer.android.com/ndk/reference/sharedmem__jni_8h.html
 
 Known Issues
 ------------
 
  * This is not intended to be a comprehensive list of all outstanding bugs.
- * gabi++ (and therefore stlport) binaries can segfault when built for armeabi:
-   https://github.com/android-ndk/ndk/issues/374.
- * `ndk-gdb` doesn't work on the Samsung Galaxy S8.
-   https://android-review.googlesource.com/408522/ fixes this and will be in a
-   future release. There is no workaround (but debugging in Android Studio
-   should work).
- * MIPS64 must use the integrated assembler. Clang defaults to using binutils
-   rather than the integrated assmebler for this target. ndk-build and cmake
-   handle this for you, but make sure to use `-fintegrated-as` for MIPS64 for
-   custom build systems. See https://github.com/android-ndk/ndk/issues/399.
+ * [Issue 360]: `thread_local` variables with non-trivial destructors will cause
+   segfaults if the containing library is `dlclose`ed on devices running M or
+   newer, or devices before M when using a static STL. The simple workaround is
+   to not call `dlclose`.
+ * [Issue 374]: gabi++ (and therefore stlport) binaries can segfault when built
+   for armeabi.
+ * [Issue 399]: MIPS64 must use the integrated assembler. Clang defaults to
+   using binutils rather than the integrated assembler for this target.
+   ndk-build and cmake handle this for you, but make sure to use
+   `-fintegrated-as` for MIPS64 for custom build systems.
+ * [Issue 573]: Clang miscompile when using `-Oz` and `-fexceptions`.
+
+[Issue 360]: https://github.com/android-ndk/ndk/issues/360
+[Issue 374]: https://github.com/android-ndk/ndk/issues/374
+[Issue 399]: https://github.com/android-ndk/ndk/issues/399
+[Issue 573]: https://github.com/android-ndk/ndk/issues/573

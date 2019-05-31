@@ -75,7 +75,10 @@ bool Optimizer::Run(const uint32_t* original_binary,
   if (module == nullptr) return false;
 
   auto status = impl_->pass_manager.Run(module.get());
-  if (status == opt::Pass::Status::SuccessWithChange) {
+  if (status == opt::Pass::Status::SuccessWithChange ||
+      (status == opt::Pass::Status::SuccessWithoutChange &&
+       (optimized_binary->data() != original_binary ||
+        optimized_binary->size() != original_binary_size))) {
     optimized_binary->clear();
     module->ToBinary(optimized_binary, /* skip_nop = */ true);
   }
@@ -98,6 +101,17 @@ Optimizer::PassToken CreateSetSpecConstantDefaultValuePass(
       MakeUnique<opt::SetSpecConstantDefaultValuePass>(id_value_map));
 }
 
+Optimizer::PassToken CreateSetSpecConstantDefaultValuePass(
+    const std::unordered_map<uint32_t, std::vector<uint32_t>>& id_value_map) {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::SetSpecConstantDefaultValuePass>(id_value_map));
+}
+
+Optimizer::PassToken CreateFlattenDecorationPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::FlattenDecorationPass>());
+}
+
 Optimizer::PassToken CreateFreezeSpecConstantValuePass() {
   return MakeUnique<Optimizer::PassToken::Impl>(
       MakeUnique<opt::FreezeSpecConstantValuePass>());
@@ -116,6 +130,66 @@ Optimizer::PassToken CreateUnifyConstantPass() {
 Optimizer::PassToken CreateEliminateDeadConstantPass() {
   return MakeUnique<Optimizer::PassToken::Impl>(
       MakeUnique<opt::EliminateDeadConstantPass>());
+}
+
+Optimizer::PassToken CreateBlockMergePass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::BlockMergePass>());
+}
+
+Optimizer::PassToken CreateInlineExhaustivePass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::InlineExhaustivePass>());
+}
+  
+Optimizer::PassToken CreateInlineOpaquePass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::InlineOpaquePass>());
+}
+  
+Optimizer::PassToken CreateLocalAccessChainConvertPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::LocalAccessChainConvertPass>());
+}
+  
+Optimizer::PassToken CreateLocalSingleBlockLoadStoreElimPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::LocalSingleBlockLoadStoreElimPass>());
+}
+
+Optimizer::PassToken CreateLocalSingleStoreElimPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::LocalSingleStoreElimPass>());
+}
+
+Optimizer::PassToken CreateInsertExtractElimPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::InsertExtractElimPass>());
+}
+
+Optimizer::PassToken CreateDeadBranchElimPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::DeadBranchElimPass>());
+}
+
+Optimizer::PassToken CreateLocalMultiStoreElimPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::LocalMultiStoreElimPass>());
+}
+
+Optimizer::PassToken CreateAggressiveDCEPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::AggressiveDCEPass>());
+}
+
+Optimizer::PassToken CreateCommonUniformElimPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::CommonUniformElimPass>());
+}
+
+Optimizer::PassToken CreateCompactIdsPass() {
+  return MakeUnique<Optimizer::PassToken::Impl>(
+      MakeUnique<opt::CompactIdsPass>());
 }
 
 }  // namespace spvtools

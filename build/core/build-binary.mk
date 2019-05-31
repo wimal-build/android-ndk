@@ -17,6 +17,13 @@
 $(call assert-defined,LOCAL_MODULE)
 $(call module-restore-locals,$(LOCAL_MODULE))
 
+# As in build-module.mk, eval sucks. Manually unstash the cflags variations to
+# preserve -Werror=#warnings.
+LOCAL_CFLAGS := $(__ndk_modules.$(LOCAL_MODULE).CFLAGS)
+LOCAL_CONLYFLAGS := $(__ndk_modules.$(LOCAL_MODULE).CONLYFLAGS)
+LOCAL_CPPFLAGS := $(__ndk_modules.$(LOCAL_MODULE).CPPFLAGS)
+LOCAL_CXXFLAGS := $(__ndk_modules.$(LOCAL_MODULE).CXXFLAGS)
+
 # For now, only support target (device-specific modules).
 # We may want to introduce support for host modules in the future
 # but that is too experimental for now.
@@ -143,10 +150,7 @@ LOCAL_RS_OBJECTS :=
 # always define ANDROID when building binaries
 #
 LOCAL_CFLAGS := -DANDROID $(LOCAL_CFLAGS)
-
-ifneq ($(APP_DEPRECATED_HEADERS),true)
-    LOCAL_CFLAGS += -D__ANDROID_API__=$(TARGET_PLATFORM_LEVEL)
-endif
+LOCAL_CFLAGS += -D__ANDROID_API__=$(TARGET_PLATFORM_LEVEL)
 
 #
 # Add the default system shared libraries to the build
@@ -581,6 +585,7 @@ $(call generate-file-dir,$(LOCAL_BUILT_MODULE))
 
 $(LOCAL_BUILT_MODULE): PRIVATE_OBJECTS := $(LOCAL_OBJECTS)
 $(LOCAL_BUILT_MODULE): PRIVATE_LIBGCC := $(TARGET_LIBGCC)
+$(LOCAL_BUILT_MODULE): PRIVATE_LIBGCC := $(TARGET_LIBATOMIC)
 
 $(LOCAL_BUILT_MODULE): PRIVATE_LD := $(TARGET_LD)
 $(LOCAL_BUILT_MODULE): PRIVATE_LDFLAGS := $(my_ldflags)
